@@ -1,0 +1,121 @@
+"""
+FastAPI application for AI-powered Tourism Assistant Microservice.
+
+This service provides:
+- Personalized travel recommendations
+- User profiling and preference management
+- Context-aware suggestions based on location and preferences
+- Traveler matching for similar interests
+
+Architecture follows clean separation between API layer, business logic,
+and ML components for maintainability and scalability.
+"""
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+import logging
+
+from app.core.config import settings
+from app.routes import recommendations, users, matching
+from app.ml.model_loader import ModelManager
+
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager for startup and shutdown events."""
+    # Startup: Load ML models and initialize components
+    logger.info("Starting Tourism Assistant microservice...")
+    
+    # Initialize ML models
+    model_manager = ModelManager()
+    await model_manager.load_models()
+    app.state.model_manager = model_manager
+    
+    logger.info("Service startup completed successfully")
+    yield
+    
+    # Shutdown: Cleanup resources
+    logger.info("Shutting down Tourism Assistant microservice...")
+
+
+# Create FastAPI application with lifespan management
+app = FastAPI(
+    title="Tourism Assistant API",
+    description="AI-powered microservice for personalized travel recommendations and traveler matching",
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# Configure CORS for frontend integration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include API routers
+app.include_router(
+    recommendations.router,
+    prefix="/api/v1/recommendations",
+    tags=["recommendations"]
+)
+
+app.include_router(
+    users.router,
+    prefix="/api/v1/users",
+    tags=["users"]
+)
+
+app.include_router(
+    matching.router,
+    prefix="/api/v1/matching",
+    tags=["matching"]
+)
+
+
+@app.get("/")
+async def root():
+    """Health check endpoint."""
+    return {
+        "message": "Tourism Assistant API is running",
+        "version": "1.0.0",
+        "status": "healthy"
+    }
+
+
+@app.get("/health")
+async def health_check():
+    """Detailed health check including ML model status."""
+    try:
+        model_manager = getattr(app.state, 'model_manager', None)
+        models_loaded = model_manager is not None and model_manager.is_ready() if model_manager else False
+        
+        return {
+            "status": "healthy",
+            "models_loaded": models_loaded,
+            "service": "tourism-assistant"
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        raise HTTPException(status_code=503, detail="Service unavailable")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )
