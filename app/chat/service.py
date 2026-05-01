@@ -36,6 +36,7 @@ from app.chat.schemas import (
     Suggestion,
     TravelContext,
 )
+from app.core.config import settings
 from app.integrations import fallback as rule_based
 from app.integrations.llm_client import LLMClient, LLMUnavailableError
 from app.prompts import budget_adjustment as budget_prompt
@@ -175,18 +176,26 @@ class ChatService:
         try:
             if intent == ChatIntent.GREETING:
                 return []  # No suggestions on a greeting
+            
+            # Scale suggestions based on duration (approx 2 per day)
+            # but cap at the global maximum from settings
+            max_suggs = settings.CHAT_MAX_SUGGESTIONS
+            if context.duration_days and context.duration_days > 0:
+                max_suggs = min(context.duration_days * 2, max_suggs)
+            else:
+                max_suggs = min(5, max_suggs)  # Default fallback if no duration
 
             # If user asked about specific activity types, filter to those
             if intent == ChatIntent.ACTIVITY_QUERY and context.activity_types:
                 return self.rec_engine.generate_for_activity_types(
                     activity_types=context.activity_types,
                     context=context,
-                    max_suggestions=5,
+                    max_suggestions=max_suggs,
                 )
 
             # General planning / follow-up
             if context.destination or context.budget_usd or context.travel_style:
-                return self.rec_engine.generate(context, max_suggestions=5)
+                return self.rec_engine.generate(context, max_suggestions=max_suggs)
 
             return []
         except Exception as exc:

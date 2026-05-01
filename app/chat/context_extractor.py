@@ -169,23 +169,18 @@ class ContextExtractor:
             return ChatIntent.BUDGET_QUESTION
 
         # Explicit planning intent
-        if any(kw in msg for kw in (
-            "plan", "trip", "travel", "visit", "go to", "fly to", "vacation",
-            "holiday", "itinerary", "journey", "tour",
-        )):
+        planning_kws = r"\b(?:plan|trip|travel|visit|go to|fly to|vacation|holiday|itinerary|journey|tour)\b"
+        if re.search(planning_kws, msg):
             return ChatIntent.TRAVEL_PLANNING
 
         # Activity-specific query
-        if any(kw in msg for kw in (
-            "activities", "things to do", "what to do", "see", "experience",
-            "recommend", "suggestion", "suggest",
-        )):
+        activity_kws = r"\b(?:activities|things to do|what to do|see|experience|recommend|suggestion|suggest)\b"
+        if re.search(activity_kws, msg):
             return ChatIntent.ACTIVITY_QUERY
 
         # Destination question
-        if any(kw in msg for kw in (
-            "where", "destination", "place", "country", "city",
-        )):
+        dest_kws = r"\b(?:where|destination|place|country|city)\b"
+        if re.search(dest_kws, msg):
             return ChatIntent.DESTINATION_QUERY
 
         # If we extracted context fields, it's likely a travel planning message
@@ -327,7 +322,7 @@ class ContextExtractor:
         """Extract travel style from the message (maps to TravelType)."""
         msg_lower = message.lower()
         for keyword, style in _STYLE_KEYWORDS.items():
-            if keyword in msg_lower:
+            if re.search(r"\b" + re.escape(keyword) + r"\b", msg_lower):
                 return style
         return None
 
@@ -336,7 +331,7 @@ class ContextExtractor:
         msg_lower = message.lower()
         found: List[str] = []
         for keyword in _INTEREST_KEYWORDS:
-            if keyword in msg_lower and keyword not in found:
+            if re.search(r"\b" + re.escape(keyword) + r"\b", msg_lower) and keyword not in found:
                 found.append(keyword)
         return found
 
@@ -346,7 +341,7 @@ class ContextExtractor:
         found: List[str] = []
         seen: set = set()
         for keyword, activity_type in _INTEREST_KEYWORDS.items():
-            if keyword in msg_lower and activity_type not in seen:
+            if re.search(r"\b" + re.escape(keyword) + r"\b", msg_lower) and activity_type not in seen:
                 found.append(activity_type)
                 seen.add(activity_type)
         return found
