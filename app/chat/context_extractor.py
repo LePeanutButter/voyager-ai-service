@@ -52,13 +52,12 @@ _BUDGET_PATTERNS: List[Tuple[str, float]] = [
 
 # Duration extraction patterns → (regex, days_multiplier)
 _DURATION_PATTERNS: List[Tuple[str, int]] = [
-    (r"(\d+)\s*days?", 1),
-    (r"(\d+)\s*nights?", 1),
-    (r"(\d+)\s*weeks?", 7),
-    (r"a\s+week", 0),          # handled specially → 7
-    (r"two\s+weeks?", 0),      # → 14
-    (r"a\s+(?:long\s+)?weekend", 0),  # → 3
-    (r"(\d+)\s*months?", 30),
+    (r"(\d+)\s*-?\s*(?:days?|nights?)", 1),
+    (r"(a|one)\s*-?\s*(?:week)", 7),
+    (r"(a|one)\s*-?\s*(?:month)", 30),
+    (r"a\s*(?:couple of)\s*(?:days?|nights?)", 2),
+    (r"a\s*(?:few)\s*(?:days?|nights?)", 3),
+    (r"(\d+)\s*-?\s*(?:weeks?)", 7),
 ]
 
 # Group size patterns

@@ -19,61 +19,108 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _format_itinerary(suggestions: List["Suggestion"], context: "TravelContext") -> str:
+    if not suggestions:
+        return ""
+
+    parts = []
+    
+    # Separate destinations from activities
+    dests = [s for s in suggestions if s.activity_type == "destination"]
+    acts = [s for s in suggestions if s.activity_type != "destination"]
+
+    if dests:
+        # We only have ONE destination now
+        d = dests[0]
+        parts.append(f"• **Top Recommendation: {d.name}**\n  {d.description}")
+
+    days_dict = {}
+    others = []
+    for s in acts:
+        if s.name.startswith("Day "):
+            try:
+                day_num, act_name = s.name.split(":", 1)
+                day_num = day_num.strip()
+                act_name = act_name.strip()
+                if day_num not in days_dict:
+                    days_dict[day_num] = []
+                days_dict[day_num].append((act_name, s))
+            except ValueError:
+                others.append(s)
+        else:
+            others.append(s)
+
+    for day_num, day_acts in days_dict.items():
+        parts.append(f"\n{day_num}:")
+        for act_name, s in day_acts:
+            if s.estimated_cost_usd and s.estimated_cost_usd > 0:
+                suffix = " per person" if context.group_size and context.group_size > 1 else ""
+                cost_str = f"(~${s.estimated_cost_usd:,.0f}{suffix})"
+            else:
+                cost_str = "(free)"
+            parts.append(f"- {act_name} {cost_str}")
+
+    if others:
+        parts.append("")
+        for s in others:
+            if s.estimated_cost_usd and s.estimated_cost_usd > 0:
+                suffix = " per person" if context.group_size and context.group_size > 1 else ""
+                cost_str = f"(~${s.estimated_cost_usd:,.0f}{suffix})"
+            else:
+                cost_str = "(free)"
+            parts.append(f"- {s.name} {cost_str}")
+
+    return "\n".join(parts).strip()
+
+
 def build_planning_reply(
     context: "TravelContext",
     suggestions: List["Suggestion"],
     is_first_message: bool,
 ) -> str:
-    """
-    Build a plain-text conversational reply for travel planning intent.
+    """Build a reply for a travel planning intent."""
+    parts = []
 
-    Args:
-        context         : Extracted travel context for this user.
-        suggestions     : Structured suggestions from the recommendation engine.
-        is_first_message: True when this is the opening turn of a conversation.
-
-    Returns:
-        A natural-language string suitable for returning to the user.
-    """
-    parts: List[str] = []
-
-    # Greeting / acknowledgement
-    if is_first_message:
-        parts.append("Welcome! I'm your AI travel assistant.")
-
-    # Confirm what we understood
-    understood: List[str] = []
-    if context.destination:
-        understood.append(f"destination: **{context.destination}**")
-    if context.budget_usd is not None:
-        understood.append(f"budget: **${context.budget_usd:,.0f}**")
-    if context.duration_days is not None:
-        understood.append(
-            f"duration: **{context.duration_days} day{'s' if context.duration_days != 1 else ''}**"
-        )
-    if context.group_size and context.group_size > 1:
-        understood.append(f"group size: **{context.group_size}**")
-    if context.travel_style:
-        understood.append(f"style: **{context.travel_style}**")
-
-    if understood:
-        parts.append("Here's what I understood about your trip — " + ", ".join(understood) + ".")
-
-    # Add suggestions
-    if suggestions:
-        parts.append(_format_suggestions(suggestions))
+    # Build intro
+    intro_words = []
+    if context.duration_days:
+        intro_words.append(f"a {context.duration_days}-day")
     else:
-        # Ask for more context if we have nothing to recommend yet
+        intro_words.append("a")
+
+    if context.budget_usd is not None:
+        if context.budget_usd < 500:
+            intro_words.append("low-budget")
+        elif context.budget_usd > 2000:
+            intro_words.append("premium")
+    elif context.travel_style:
+        intro_words.append(context.travel_style)
+
+    intro_words.append("trip")
+
+    if context.destination:
+        intro_words.append(f"to {context.destination}")
+
+    if context.group_size and context.group_size == 2:
+        intro_words.append("with your partner")
+    elif context.group_size and context.group_size > 2:
+        intro_words.append(f"for {context.group_size} people")
+    elif context.group_size == 1 or context.travel_style == "solo":
+        intro_words.append("solo")
+
+    intro_str = " ".join(intro_words)
+
+    if suggestions:
+        parts.append(f"For {intro_str}:\n")
+        parts.append(_format_itinerary(suggestions, context))
+    else:
         missing = _identify_missing_context(context)
         if missing:
             parts.append(f"To give you better recommendations, could you tell me your {missing}?")
         else:
-            parts.append(
-                "I'd love to help you plan this trip! "
-                "Could you share any specific interests or activities you enjoy?"
-            )
+            parts.append("Could you share any specific interests or activities you enjoy?")
 
-    return "\n\n".join(parts)
+    return "\n".join(parts)
 
 
 def build_budget_reply(
@@ -81,38 +128,24 @@ def build_budget_reply(
     suggestions: List["Suggestion"],
     old_budget: Optional[float],
 ) -> str:
-    """
-    Build a reply acknowledging a budget change and adjusting recommendations.
-
-    Args:
-        context    : Updated travel context with new budget.
-        suggestions: Recalculated suggestions for the new budget.
-        old_budget : Previous budget value (or None if not set before).
-
-    Returns:
-        A natural-language string.
-    """
-    parts: List[str] = []
+    """Build a reply acknowledging a budget constraint update."""
+    parts = []
 
     if old_budget is not None and context.budget_usd is not None:
         direction = "lower" if context.budget_usd < old_budget else "higher"
         parts.append(
             f"Got it! I've adjusted your recommendations for your {direction} budget "
-            f"of **${context.budget_usd:,.0f}**."
+            f"of **${context.budget_usd:,.0f}**.\n"
         )
     elif context.budget_usd is not None:
-        parts.append(f"Thanks for sharing your budget of **${context.budget_usd:,.0f}**.")
+        parts.append(f"Thanks for sharing your budget of **${context.budget_usd:,.0f}**.\n")
 
     if suggestions:
-        parts.append(_format_suggestions(suggestions))
+        parts.append(_format_itinerary(suggestions, context))
     else:
-        destination_hint = f" in {context.destination}" if context.destination else ""
-        parts.append(
-            f"With this budget{destination_hint}, I recommend focusing on "
-            "free or low-cost cultural experiences, local street food, and public transportation."
-        )
+        parts.append("I don't have specific recommendations for this budget yet.")
 
-    return "\n\n".join(parts)
+    return "\n".join(parts)
 
 
 def build_follow_up_reply(
@@ -120,57 +153,29 @@ def build_follow_up_reply(
     suggestions: List["Suggestion"],
     user_message: str,
 ) -> str:
-    """
-    Build a reply for a follow-up / clarification message.
-
-    Args:
-        context      : Current travel context.
-        suggestions  : Suggestions (may be empty if context is thin).
-        user_message : The raw user message (used for keyword-based routing).
-
-    Returns:
-        A natural-language string.
-    """
+    """Build a generic follow-up reply."""
     msg_lower = user_message.lower()
-    parts: List[str] = []
+    parts = []
 
-    # Acknowledge the specific follow-up topic
-    if any(w in msg_lower for w in ("weather", "climate", "season", "when")):
-        dest = context.destination or "your destination"
-        parts.append(
-            f"The best time to visit {dest} depends on the season. "
-            "I recommend checking local weather patterns for your travel dates."
-        )
-    elif any(w in msg_lower for w in ("food", "eat", "restaurant", "cuisine", "dining")):
-        parts.append("Great choice — local cuisine is one of the highlights of any trip!")
-    elif any(w in msg_lower for w in ("transport", "flight", "train", "bus", "get there")):
-        dest = context.destination or "your destination"
-        parts.append(
-            f"For getting to {dest}, compare flights on aggregator sites. "
-            "Once there, local public transit is often the most cost-effective option."
-        )
-    elif any(w in msg_lower for w in ("hotel", "stay", "accommodation", "hostel", "airbnb")):
-        tier = _budget_tier(context.budget_usd)
-        if tier == "budget":
-            parts.append("For budget stays, hostels and guesthouses offer great value and social vibes.")
-        elif tier == "premium":
-            parts.append("With your budget, you have access to excellent boutique hotels and resorts.")
-        else:
-            parts.append("Mid-range hotels and serviced apartments offer a good balance of comfort and price.")
+    if any(kw in msg_lower for kw in ("food", "eat", "dining", "restaurant")):
+        parts.append("I see you're interested in food and dining!")
+    elif any(kw in msg_lower for kw in ("museum", "history", "culture")):
+        parts.append("Cultural and historical activities are a great choice.")
+    elif any(kw in msg_lower for kw in ("adventure", "hike", "active")):
+        parts.append("Adventure activities are a great way to explore!")
     else:
-        parts.append(
-            f"Based on your trip context{' to ' + context.destination if context.destination else ''}, "
-            "here are my thoughts:"
-        )
+        dest_str = f" to {context.destination}" if context.destination else ""
+        parts.append(f"Based on your trip context{dest_str}, here are my thoughts:")
 
     if suggestions:
-        parts.append(_format_suggestions(suggestions))
+        parts.append("\nHere are some recommendations:\n")
+        parts.append(_format_itinerary(suggestions, context))
     elif context.destination:
         parts.append(
-            f"Would you like me to suggest specific activities or itinerary ideas for {context.destination}?"
+            f"\nWould you like me to suggest specific activities for {context.destination}?"
         )
 
-    return "\n\n".join(parts)
+    return "\n".join(parts)
 
 
 def build_greeting_reply() -> str:
@@ -190,27 +195,6 @@ def build_greeting_reply() -> str:
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
-
-def _format_suggestions(suggestions: List["Suggestion"]) -> str:
-    """Format a list of Suggestion objects into a readable reply block."""
-    if not suggestions:
-        return ""
-
-    lines: List[str] = ["Here are some recommendations:"]
-    for i, s in enumerate(suggestions[:14], start=1):
-        cost_hint = f" (~${s.estimated_cost_usd:,.0f})" if s.estimated_cost_usd else ""
-        
-        # If it's a destination, format differently
-        if s.activity_type == "destination":
-            lines.append(f"• **{s.name}**")
-            if s.description:
-                lines.append(f"  {s.description}")
-        else:
-            lines.append(f"{i}. **{s.name}**{cost_hint}")
-            if s.description:
-                lines.append(f"   {s.description}")
-    return "\n".join(lines)
-
 
 def _identify_missing_context(context: "TravelContext") -> str:
     """Return a human-readable list of missing context fields."""

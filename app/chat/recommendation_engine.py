@@ -149,83 +149,66 @@ class ChatRecommendationEngine:
         if max_suggestions <= 0:
             return []
 
-        # If no destination is specified, suggest destinations
-        if not context.destination:
-            return self._suggest_destinations(context, max_suggestions)
-
-        # Otherwise, suggest specific activities
-        return self._suggest_activities(context, max_suggestions)
-
-    def generate_for_activity_types(
-        self,
-        activity_types: List[str],
-        context: TravelContext,
-        max_suggestions: int = 5,
-    ) -> List[Suggestion]:
-        return self.generate(context, max_suggestions)
-
-    # ------------------------------------------------------------------
-    # Destination Recommendation Logic
-    # ------------------------------------------------------------------
-    def _suggest_destinations(self, context: TravelContext, limit: int) -> List[Suggestion]:
-        tier = _budget_tier(context.budget_usd)
-        
-        # Gather all tags user is interested in
         user_tags = set(context.interests + context.activity_types)
         if context.travel_style:
             user_tags.add(context.travel_style)
-        
-        # Score destinations
-        scored = []
-        for dest, info in _DESTINATIONS.items():
-            score = 0
-            dest_tags = info["tags"]
             
-            if tier in dest_tags:
-                score += 2
-            
-            # Context matching
-            for tag in user_tags:
-                if tag in dest_tags:
-                    score += 3
-            
-            scored.append((score, dest, info))
-        
-        # Sort by score descending
-        scored.sort(key=lambda x: x[0], reverse=True)
-        
-        suggestions = []
-        for score, dest, info in scored[:limit]:
-            country = info["country"]
-            suggestions.append(Suggestion(
-                name=f"{dest}, {country}",
-                activity_type="destination",
-                description=f"A fantastic {info['tags'][0]} destination. Great for {info['tags'][1]} and {info['tags'][2]}.",
-                budget_tier=tier,
-                tags=info["tags"]
-            ))
-            
-        return suggestions
+        tier = _budget_tier(context.budget_usd)
+        is_low_budget = context.budget_usd is not None and context.budget_usd < 500
 
-    # ------------------------------------------------------------------
-    # Activity Recommendation Logic
-    # ------------------------------------------------------------------
-    def _suggest_activities(self, context: TravelContext, limit: int) -> List[Suggestion]:
-        dest_query = context.destination.title() if context.destination else ""
+        # Step 1: Resolve exactly ONE destination (must be a city)
+        chosen_dest = context.destination.title() if context.destination else None
+        reasoning_str = ""
         
-        # Map country to specific cities, or try exact city match
-        target_cities = []
-        if dest_query in _COUNTRY_MAP:
-            target_cities = _COUNTRY_MAP[dest_query]
+        if not chosen_dest or chosen_dest in _COUNTRY_MAP:
+            # Score and pick the top 1 destination (must be a city)
+            scored = []
+            cities_to_score = _COUNTRY_MAP[chosen_dest] if chosen_dest in _COUNTRY_MAP else _DESTINATIONS.keys()
+            for dest in cities_to_score:
+                info = _DESTINATIONS[dest]
+                score = 0
+                dest_tags = info["tags"]
+                if tier in dest_tags: score += 2
+                for tag in user_tags:
+                    if tag in dest_tags: score += 3
+                scored.append((score, dest, info))
+                
+            scored.sort(key=lambda x: x[0], reverse=True)
+            top_dest = scored[0][1]
+            top_info = scored[0][2]
+            
+            if context.destination and context.destination.title() in _COUNTRY_MAP:
+                reasoning_str = f"Selected {top_dest} as the best match for your trip to {context.destination.title()}."
+            else:
+                match_tags = [t for t in user_tags if t in top_info["tags"]]
+                if match_tags:
+                    reason_tags = " and ".join(match_tags[:2])
+                    reasoning_str = f"Selected because it perfectly matches your preference for {reason_tags}."
+                else:
+                    reasoning_str = f"Selected because it fits your {tier} budget profile perfectly."
+            
+            chosen_dest = top_dest
         else:
-            # Fallback matching
-            for city, info in _DESTINATIONS.items():
-                if city in dest_query or info["country"] in dest_query:
-                    target_cities.append(city)
-            if not target_cities:
-                target_cities = [dest_query]  # Just use the query, though no specific data
+            reasoning_str = f"Focused on {chosen_dest} to match your request."
 
-        # Gather activities
+        # Step 2: Build suggestion list starting with the destination + reasoning
+        suggestions = []
+        dest_query = chosen_dest
+        
+        target_cities = [dest_query] if dest_query in _DESTINATIONS else [dest_query]
+
+        country = _DESTINATIONS.get(target_cities[0], {}).get("country", "") if target_cities and target_cities[0] in _DESTINATIONS else ""
+        dest_display = f"{dest_query}, {country}" if country and country not in dest_query else dest_query
+        
+        suggestions.append(Suggestion(
+            name=dest_display,
+            activity_type="destination",
+            description=reasoning_str,
+            budget_tier=tier,
+            tags=[]
+        ))
+
+        # Step 3: Collect and strictly filter activities
         raw_activities = []
         for city in target_cities:
             if city in _ACTIVITIES:
@@ -233,32 +216,21 @@ class ChatRecommendationEngine:
                     act["city"] = city
                     raw_activities.append(act)
         
-        # If no activities found for this specific place, use generic fallback list
         if not raw_activities:
             raw_activities = [
-                {"name": f"Explore the city center of {dest_query}", "type": "sightseeing", "cost": 0, "tags": ["free", "sightseeing"], "city": dest_query},
-                {"name": f"Dine at a local restaurant in {dest_query}", "type": "dining", "cost": 30, "tags": ["food", "local"], "city": dest_query},
-                {"name": f"Visit the main cultural district in {dest_query}", "type": "cultural", "cost": 15, "tags": ["educational", "cultural"], "city": dest_query},
-                {"name": f"Relax in the prominent parks of {dest_query}", "type": "relaxation", "cost": 0, "tags": ["free", "nature"], "city": dest_query},
-                {"name": f"Experience the evening atmosphere in {dest_query}", "type": "entertainment", "cost": 25, "tags": ["social", "nightlife"], "city": dest_query}
+                {"name": f"Explore the city center", "type": "sightseeing", "cost": 0, "tags": ["free", "sightseeing"], "city": dest_query},
+                {"name": f"Dine at a local restaurant", "type": "dining", "cost": 30, "tags": ["food", "local"], "city": dest_query},
+                {"name": f"Visit the main cultural district", "type": "cultural", "cost": 15, "tags": ["educational", "cultural"], "city": dest_query},
+                {"name": f"Relax in prominent parks", "type": "relaxation", "cost": 0, "tags": ["free", "nature"], "city": dest_query},
             ]
-
-        # Filter by budget
-        tier = _budget_tier(context.budget_usd)
-        is_low_budget = context.budget_usd is not None and context.budget_usd < 500
-        group_size = context.group_size or 1
 
         filtered = []
         for act in raw_activities:
-            # If extremely low budget, skip very expensive single activities
-            if is_low_budget and act["cost"] * group_size > 100:
-                continue
+            # STRICT BUDGET LOGIC
+            if is_low_budget:
+                if act["cost"] > 40 or "premium" in act["tags"]:
+                    continue # Skip high cost entirely
             filtered.append(act)
-
-        # Sort activities: prioritize "free"/"budget" if low budget, otherwise by match
-        user_tags = set(context.interests + context.activity_types)
-        if context.travel_style:
-            user_tags.add(context.travel_style)
 
         def score_act(act):
             score = 0
@@ -271,8 +243,7 @@ class ChatRecommendationEngine:
 
         filtered.sort(key=score_act, reverse=True)
 
-        # Assign per day if duration exists
-        suggestions = []
+        # Step 4: Assign days
         if context.duration_days and context.duration_days > 0:
             day = 1
             count = 0
@@ -280,13 +251,12 @@ class ChatRecommendationEngine:
             
             for act in filtered:
                 sugg_name = f"Day {day}: {act['name']} ({act['city']})" if len(target_cities) > 1 else f"Day {day}: {act['name']}"
-                desc = f"A fantastic {act['type']} experience. Estimated cost: ${act['cost']}" if act['cost'] > 0 else f"A fantastic free {act['type']} experience."
                 
                 suggestions.append(Suggestion(
                     name=sugg_name,
                     activity_type=act["type"],
-                    description=desc,
-                    estimated_cost_usd=act["cost"] * group_size if act["cost"] > 0 else 0.0,
+                    description="",
+                    estimated_cost_usd=float(act["cost"]) if act["cost"] > 0 else 0.0,
                     budget_tier=tier,
                     tags=act["tags"]
                 ))
@@ -297,19 +267,24 @@ class ChatRecommendationEngine:
                     count = 0
                     if day > context.duration_days:
                         break
-                        
         else:
-            # No duration, just return top list
-            for act in filtered[:limit]:
+            for act in filtered[:max_suggestions]:
                 sugg_name = f"{act['name']} ({act['city']})" if len(target_cities) > 1 else act['name']
-                desc = f"A fantastic {act['type']} experience. Estimated cost: ${act['cost']}" if act['cost'] > 0 else f"A fantastic free {act['type']} experience."
                 suggestions.append(Suggestion(
                     name=sugg_name,
                     activity_type=act["type"],
-                    description=desc,
-                    estimated_cost_usd=act["cost"] * group_size if act["cost"] > 0 else 0.0,
+                    description="",
+                    estimated_cost_usd=float(act["cost"]) if act["cost"] > 0 else 0.0,
                     budget_tier=tier,
                     tags=act["tags"]
                 ))
 
         return suggestions
+
+    def generate_for_activity_types(
+        self,
+        activity_types: List[str],
+        context: TravelContext,
+        max_suggestions: int = 5,
+    ) -> List[Suggestion]:
+        return self.generate(context, max_suggestions)
