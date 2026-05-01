@@ -140,28 +140,11 @@ def _budget_tier(budget_usd: Optional[float]) -> str:
 class ChatRecommendationEngine:
     """Generates context-aware, specific suggestions."""
 
-    def generate(
-        self,
-        context: TravelContext,
-        max_suggestions: int = 5,
-        exclude_types: Optional[List[str]] = None,
-    ) -> List[Suggestion]:
-        if max_suggestions <= 0:
-            return []
-
-        user_tags = set(context.interests + context.activity_types)
-        if context.travel_style:
-            user_tags.add(context.travel_style)
-            
-        tier = _budget_tier(context.budget_usd)
-        is_low_budget = context.budget_usd is not None and context.budget_usd < 500
-
-        # Step 1: Resolve exactly ONE destination (must be a city)
+    def _resolve_destination(self, context: TravelContext, user_tags: set, tier: str) -> Tuple[str, str]:
         chosen_dest = context.destination.title() if context.destination else None
         reasoning_str = ""
         
         if not chosen_dest or chosen_dest in _COUNTRY_MAP:
-            # Score and pick the top 1 destination (must be a city)
             scored = []
             cities_to_score = _COUNTRY_MAP[chosen_dest] if chosen_dest in _COUNTRY_MAP else _DESTINATIONS.keys()
             for dest in cities_to_score:
@@ -190,14 +173,23 @@ class ChatRecommendationEngine:
             chosen_dest = top_dest
         else:
             reasoning_str = f"Focused on {chosen_dest} to match your request."
+            
+        return chosen_dest, reasoning_str
 
-        # Step 2: Build suggestion list starting with the destination + reasoning
+    def _build_itinerary_for_destination(
+        self, 
+        dest_query: str, 
+        reasoning_str: str, 
+        context: TravelContext, 
+        user_tags: set, 
+        tier: str, 
+        max_suggestions: int
+    ) -> List[Suggestion]:
+        is_low_budget = context.budget_usd is not None and context.budget_usd < 500
         suggestions = []
-        dest_query = chosen_dest
-        
-        target_cities = [dest_query] if dest_query in _DESTINATIONS else [dest_query]
+        target_cities = [dest_query]
 
-        country = _DESTINATIONS.get(target_cities[0], {}).get("country", "") if target_cities and target_cities[0] in _DESTINATIONS else ""
+        country = _DESTINATIONS.get(dest_query, {}).get("country", "")
         dest_display = f"{dest_query}, {country}" if country and country not in dest_query else dest_query
         
         suggestions.append(Suggestion(
@@ -208,28 +200,25 @@ class ChatRecommendationEngine:
             tags=[]
         ))
 
-        # Step 3: Collect and strictly filter activities
         raw_activities = []
-        for city in target_cities:
-            if city in _ACTIVITIES:
-                for act in _ACTIVITIES[city]:
-                    act["city"] = city
-                    raw_activities.append(act)
+        if dest_query in _ACTIVITIES:
+            for act in _ACTIVITIES[dest_query]:
+                act["city"] = dest_query
+                raw_activities.append(act)
         
         if not raw_activities:
             raw_activities = [
-                {"name": f"Explore the city center", "type": "sightseeing", "cost": 0, "tags": ["free", "sightseeing"], "city": dest_query},
-                {"name": f"Dine at a local restaurant", "type": "dining", "cost": 30, "tags": ["food", "local"], "city": dest_query},
-                {"name": f"Visit the main cultural district", "type": "cultural", "cost": 15, "tags": ["educational", "cultural"], "city": dest_query},
-                {"name": f"Relax in prominent parks", "type": "relaxation", "cost": 0, "tags": ["free", "nature"], "city": dest_query},
+                {"name": "Explore the city center", "type": "sightseeing", "cost": 0, "tags": ["free", "sightseeing"], "city": dest_query},
+                {"name": "Dine at a local restaurant", "type": "dining", "cost": 30, "tags": ["food", "local"], "city": dest_query},
+                {"name": "Visit the main cultural district", "type": "cultural", "cost": 15, "tags": ["educational", "cultural"], "city": dest_query},
+                {"name": "Relax in prominent parks", "type": "relaxation", "cost": 0, "tags": ["free", "nature"], "city": dest_query},
             ]
 
         filtered = []
         for act in raw_activities:
-            # STRICT BUDGET LOGIC
             if is_low_budget:
                 if act["cost"] > 40 or "premium" in act["tags"]:
-                    continue # Skip high cost entirely
+                    continue
             filtered.append(act)
 
         def score_act(act):
@@ -243,14 +232,13 @@ class ChatRecommendationEngine:
 
         filtered.sort(key=score_act, reverse=True)
 
-        # Step 4: Assign days
         if context.duration_days and context.duration_days > 0:
             day = 1
             count = 0
             acts_per_day = 2
             
             for act in filtered:
-                sugg_name = f"Day {day}: {act['name']} ({act['city']})" if len(target_cities) > 1 else f"Day {day}: {act['name']}"
+                sugg_name = f"Day {day}: {act['name']}"
                 
                 suggestions.append(Suggestion(
                     name=sugg_name,
@@ -269,9 +257,8 @@ class ChatRecommendationEngine:
                         break
         else:
             for act in filtered[:max_suggestions]:
-                sugg_name = f"{act['name']} ({act['city']})" if len(target_cities) > 1 else act['name']
                 suggestions.append(Suggestion(
-                    name=sugg_name,
+                    name=act['name'],
                     activity_type=act["type"],
                     description="",
                     estimated_cost_usd=float(act["cost"]) if act["cost"] > 0 else 0.0,
@@ -281,9 +268,25 @@ class ChatRecommendationEngine:
 
         return suggestions
 
+    def generate(
+        self,
+        context: TravelContext,
+        max_suggestions: int = 5,
+    ) -> List[Suggestion]:
+        if max_suggestions <= 0:
+            return []
+
+        user_tags = set(context.interests + context.activity_types)
+        if context.travel_style:
+            user_tags.add(context.travel_style)
+            
+        tier = _budget_tier(context.budget_usd)
+
+        chosen_dest, reasoning_str = self._resolve_destination(context, user_tags, tier)
+        return self._build_itinerary_for_destination(chosen_dest, reasoning_str, context, user_tags, tier, max_suggestions)
+
     def generate_for_activity_types(
         self,
-        activity_types: List[str],
         context: TravelContext,
         max_suggestions: int = 5,
     ) -> List[Suggestion]:

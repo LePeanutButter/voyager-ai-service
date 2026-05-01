@@ -21,7 +21,7 @@ Design:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from app.chat.context_extractor import ContextExtractor
@@ -188,7 +188,6 @@ class ChatService:
             # If user asked about specific activity types, filter to those
             if intent == ChatIntent.ACTIVITY_QUERY and context.activity_types:
                 return self.rec_engine.generate_for_activity_types(
-                    activity_types=context.activity_types,
                     context=context,
                     max_suggestions=max_suggs,
                 )
@@ -320,7 +319,6 @@ class ChatService:
             return rule_based.build_planning_reply(
                 context=context,
                 suggestions=suggestions,
-                is_first_message=is_first,
             )
 
         if intent == ChatIntent.ACTIVITY_QUERY:
@@ -356,5 +354,5 @@ class ChatService:
                 "travel_style": context.travel_style,
                 "group_size": context.group_size,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }

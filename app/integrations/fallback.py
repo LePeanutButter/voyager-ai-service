@@ -19,21 +19,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _format_itinerary(suggestions: List["Suggestion"], context: "TravelContext") -> str:
-    if not suggestions:
+def _format_destinations(dests: List["Suggestion"]) -> str:
+    if not dests:
         return ""
+    d = dests[0]
+    return f"• **Top Recommendation: {d.name}**\n  {d.description}"
 
+
+def _format_activities(acts: List["Suggestion"], context: "TravelContext") -> str:
+    if not acts:
+        return ""
+        
     parts = []
-    
-    # Separate destinations from activities
-    dests = [s for s in suggestions if s.activity_type == "destination"]
-    acts = [s for s in suggestions if s.activity_type != "destination"]
-
-    if dests:
-        # We only have ONE destination now
-        d = dests[0]
-        parts.append(f"• **Top Recommendation: {d.name}**\n  {d.description}")
-
     days_dict = {}
     others = []
     for s in acts:
@@ -53,35 +50,45 @@ def _format_itinerary(suggestions: List["Suggestion"], context: "TravelContext")
     for day_num, day_acts in days_dict.items():
         parts.append(f"\n{day_num}:")
         for act_name, s in day_acts:
+            cost_str = "(free)"
             if s.estimated_cost_usd and s.estimated_cost_usd > 0:
                 suffix = " per person" if context.group_size and context.group_size > 1 else ""
                 cost_str = f"(~${s.estimated_cost_usd:,.0f}{suffix})"
-            else:
-                cost_str = "(free)"
             parts.append(f"- {act_name} {cost_str}")
 
     if others:
         parts.append("")
         for s in others:
+            cost_str = "(free)"
             if s.estimated_cost_usd and s.estimated_cost_usd > 0:
                 suffix = " per person" if context.group_size and context.group_size > 1 else ""
                 cost_str = f"(~${s.estimated_cost_usd:,.0f}{suffix})"
-            else:
-                cost_str = "(free)"
             parts.append(f"- {s.name} {cost_str}")
+
+    return "\n".join(parts)
+
+
+def _format_itinerary(suggestions: List["Suggestion"], context: "TravelContext") -> str:
+    if not suggestions:
+        return ""
+
+    dests = [s for s in suggestions if s.activity_type == "destination"]
+    acts = [s for s in suggestions if s.activity_type != "destination"]
+
+    parts = []
+    
+    dest_str = _format_destinations(dests)
+    if dest_str:
+        parts.append(dest_str)
+        
+    acts_str = _format_activities(acts, context)
+    if acts_str:
+        parts.append(acts_str)
 
     return "\n".join(parts).strip()
 
 
-def build_planning_reply(
-    context: "TravelContext",
-    suggestions: List["Suggestion"],
-    is_first_message: bool,
-) -> str:
-    """Build a reply for a travel planning intent."""
-    parts = []
-
-    # Build intro
+def _build_intro_string(context: "TravelContext") -> str:
     intro_words = []
     if context.duration_days:
         intro_words.append(f"a {context.duration_days}-day")
@@ -108,7 +115,17 @@ def build_planning_reply(
     elif context.group_size == 1 or context.travel_style == "solo":
         intro_words.append("solo")
 
-    intro_str = " ".join(intro_words)
+    return " ".join(intro_words)
+
+
+def build_planning_reply(
+    context: "TravelContext",
+    suggestions: List["Suggestion"],
+) -> str:
+    """Build a reply for a travel planning intent."""
+    parts = []
+
+    intro_str = _build_intro_string(context)
 
     if suggestions:
         parts.append(f"For {intro_str}:\n")

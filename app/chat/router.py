@@ -11,6 +11,7 @@ Rate limiting: Not implemented here; apply at the gateway layer.
 """
 
 import logging
+from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
@@ -55,7 +56,6 @@ def get_chat_service(request: Request) -> ChatService:
 
 @router.post(
     "",
-    response_model=ChatResponse,
     summary="Send a message to the travel chatbot",
     description=(
         "Send a conversational message and receive an AI-powered travel planning reply. "
@@ -70,7 +70,7 @@ def get_chat_service(request: Request) -> ChatService:
 )
 async def chat(
     request_data: ChatRequest,
-    service: ChatService = Depends(get_chat_service),
+    service: Annotated[ChatService, Depends(get_chat_service)],
 ) -> ChatResponse:
     """
     Main chat endpoint.
@@ -106,8 +106,7 @@ async def chat(
 
 
 @router.get(
-    "/{userId}/history",
-    response_model=ConversationHistoryResponse,
+    "/{user_id}/history",
     summary="Get conversation history",
     description=(
         "Retrieve the full conversation history and accumulated travel context "
@@ -119,27 +118,27 @@ async def chat(
     },
 )
 async def get_history(
-    userId: str,
-    service: ChatService = Depends(get_chat_service),
+    user_id: str,
+    service: Annotated[ChatService, Depends(get_chat_service)],
 ) -> ConversationHistoryResponse:
     """
     Get conversation history for a user.
 
-    - **userId**: The user's unique identifier
+    - **user_id**: The user's unique identifier
     """
-    if not userId or not userId.strip():
+    if not user_id or not user_id.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="userId must not be blank",
+            detail="user_id must not be blank",
         )
 
     try:
-        history_response = service.get_history(userId.strip())
+        history_response = service.get_history(user_id.strip())
 
         if history_response.total_messages == 0:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No conversation history found for user '{userId}'",
+                detail="No conversation history found for this user",
             )
 
         return history_response
@@ -147,7 +146,7 @@ async def get_history(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("Error fetching history for user %s: %s", userId, exc, exc_info=True)
+        logger.error("Error fetching history: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve conversation history.",
@@ -155,8 +154,7 @@ async def get_history(
 
 
 @router.delete(
-    "/{userId}/history",
-    response_model=ClearHistoryResponse,
+    "/{user_id}/history",
     summary="Clear conversation history",
     description=(
         "Delete all conversation history and travel context for a given user. "
@@ -168,39 +166,39 @@ async def get_history(
     },
 )
 async def clear_history(
-    userId: str,
-    service: ChatService = Depends(get_chat_service),
+    user_id: str,
+    service: Annotated[ChatService, Depends(get_chat_service)],
 ) -> ClearHistoryResponse:
     """
     Clear conversation history for a user.
 
-    - **userId**: The user's unique identifier
+    - **user_id**: The user's unique identifier
     """
-    if not userId or not userId.strip():
+    if not user_id or not user_id.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="userId must not be blank",
+            detail="user_id must not be blank",
         )
 
     try:
-        cleared = await service.clear_history(userId.strip())
+        cleared = await service.clear_history(user_id.strip())
 
         if not cleared:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No conversation history found for user '{userId}'",
+                detail="No conversation history found for this user",
             )
 
-        logger.info("Cleared conversation history for user %s", userId)
+        logger.info("Cleared conversation history successfully.")
         return ClearHistoryResponse(
-            userId=userId.strip(),
-            message=f"Conversation history for user '{userId}' has been cleared.",
+            userId=user_id.strip(),
+            message="Conversation history has been cleared.",
         )
 
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("Error clearing history for user %s: %s", userId, exc, exc_info=True)
+        logger.error("Error clearing history: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to clear conversation history.",

@@ -11,7 +11,7 @@ import logging
 from typing import Dict, Any, Optional
 from abc import ABC, abstractmethod
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.core.config import settings
 
@@ -62,7 +62,7 @@ class RecommendationModel(BaseModel):
                 'algorithm': 'matrix_factorization'
             }
             self.metadata = {
-                'loaded_at': datetime.utcnow(),
+                'loaded_at': datetime.now(timezone.utc),
                 'model_type': 'recommendation',
                 'version': '1.0',
                 'accuracy': 0.85
@@ -147,7 +147,7 @@ class UserProfilingModel(BaseModel):
                 'algorithm': 'deep_learning'
             }
             self.metadata = {
-                'loaded_at': datetime.utcnow(),
+                'loaded_at': datetime.now(timezone.utc),
                 'model_type': 'user_profiling',
                 'version': '1.0',
                 'accuracy': 0.82
@@ -233,7 +233,7 @@ class TravelerMatchingModel(BaseModel):
                 'algorithm': 'siamese_network'
             }
             self.metadata = {
-                'loaded_at': datetime.utcnow(),
+                'loaded_at': datetime.now(timezone.utc),
                 'model_type': 'traveler_matching',
                 'version': '1.0',
                 'accuracy': 0.78

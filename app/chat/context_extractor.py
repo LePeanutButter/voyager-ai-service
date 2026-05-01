@@ -213,58 +213,58 @@ class ContextExtractor:
             keyword_counts=self._count_keywords(message),
         )
 
-    def _extract_destination(self, message: str) -> Optional[str]:
-        """Extract a destination place name from the message."""
-        # Check against known dataset for exact/substring matches first
+    def _extract_destination_known(self, msg_lower: str) -> Optional[str]:
         known_places = [
             "Cancun", "Tulum", "Bali", "Phuket", "Rome", "Kyoto", 
             "Cairo", "Istanbul", "Paris", "Venice", "Santorini", "Prague",
             "Mexico", "Italy", "France", "Indonesia", "Thailand", 
             "Japan", "Egypt", "Turkey", "Greece", "Czech Republic"
         ]
-        msg_lower = message.lower()
         for place in known_places:
             if re.search(r"\b" + re.escape(place.lower()) + r"\b", msg_lower):
                 return place
+        return None
 
-        # Fallback to regex patterns if no known place is found
+    def _extract_destination_regex(self, message: str) -> Optional[str]:
+        invalid_words = {
+            "the", "this", "that", "my", "our", "your", "some", "any",
+            "few", "all", "more", "less", "beach", "cheap", "romantic",
+            "travel", "trip", "day", "days", "vacation", "holiday", 
+            "want", "need", "like", "love", "go", "going", "visit", 
+            "relax", "relaxed", "relaxing", "cultural", "adventure"
+        }
         for pattern in _DESTINATION_PATTERNS:
             match = re.search(pattern, message, re.IGNORECASE | re.MULTILINE)
             if match:
                 destination = match.group(1).strip().title()
                 dest_lower = destination.lower()
-                # Filter out common false positives (short common words, verbs, adjectives)
-                invalid_words = {
-                    "the", "this", "that", "my", "our", "your", "some", "any",
-                    "few", "all", "more", "less", "beach", "cheap", "romantic",
-                    "travel", "trip", "day", "days", "vacation", "holiday", 
-                    "want", "need", "like", "love", "go", "going", "visit", 
-                    "relax", "relaxed", "relaxing", "cultural", "adventure"
-                }
                 words = dest_lower.split()
                 if len(destination) >= 3 and not any(w in invalid_words for w in words):
                     return destination
         return None
 
-    def _extract_budget(self, message: str) -> Optional[float]:
-        """Extract a numeric budget value (USD) from the message."""
-        # Check for explicit "no budget" / unlimited
-        if re.search(r"no\s+budget|unlimited|any\s+budget|don'?t\s+(?:care|mind)", message, re.I):
-            return None
+    def _extract_destination(self, message: str) -> Optional[str]:
+        """Extract a destination place name from the message."""
+        known = self._extract_destination_known(message.lower())
+        if known:
+            return known
+            
+        return self._extract_destination_regex(message)
 
+    def _extract_budget_patterns(self, message: str) -> Optional[float]:
         for pattern, multiplier in _BUDGET_PATTERNS:
             match = re.search(pattern, message, re.IGNORECASE)
             if match:
                 raw = match.group(1).replace(",", "")
                 try:
                     value = float(raw) * multiplier
-                    if 1 <= value <= 1_000_000:  # sanity bounds
+                    if 1 <= value <= 1_000_000:
                         return round(value, 2)
                 except ValueError:
                     continue
+        return None
 
-        # Qualitative budget levels
-        msg_lower = message.lower()
+    def _extract_budget_qualitative(self, msg_lower: str) -> Optional[float]:
         if re.search(r"\bvery\s+cheap\b|\bshoestring\b|\bextremely\s+budget\b", msg_lower):
             return 200.0
         if re.search(r"\bcheap\b|\blow\s+budget\b|\bbackpack\b|\bbudget\s+travel\b", msg_lower):
@@ -273,14 +273,20 @@ class ContextExtractor:
             return 1000.0
         if re.search(r"\bluxury\b|\bpremium\b|\bfive[\s-]?star\b|\bupscale\b", msg_lower):
             return 5000.0
-
         return None
 
-    def _extract_duration(self, message: str) -> Optional[int]:
-        """Extract trip duration in days from the message."""
-        msg_lower = message.lower()
+    def _extract_budget(self, message: str) -> Optional[float]:
+        """Extract a numeric budget value (USD) from the message."""
+        if re.search(r"no\s+budget|unlimited|any\s+budget|don'?t\s+(?:care|mind)", message, re.I):
+            return None
 
-        # Special fixed phrases
+        val = self._extract_budget_patterns(message)
+        if val is not None:
+            return val
+
+        return self._extract_budget_qualitative(message.lower())
+
+    def _extract_duration_special(self, msg_lower: str) -> Optional[int]:
         if re.search(r"\ba\s+week\b|\bone\s+week\b", msg_lower):
             return 7
         if re.search(r"\btwo\s+weeks?\b", msg_lower):
@@ -291,10 +297,10 @@ class ContextExtractor:
             return 3
         if re.search(r"\ba\s+month\b|\bone\s+month\b", msg_lower):
             return 30
+        return None
 
+    def _extract_duration_patterns(self, message: str) -> Optional[int]:
         for pattern, multiplier in _DURATION_PATTERNS:
-            if multiplier == 0:
-                continue  # already handled above
             match = re.search(pattern, message, re.IGNORECASE)
             if match:
                 try:
@@ -304,22 +310,27 @@ class ContextExtractor:
                         return total
                 except (ValueError, IndexError):
                     continue
-
         return None
 
-    def _extract_group_size(self, message: str) -> Optional[int]:
-        """Extract the number of travelers from the message."""
+    def _extract_duration(self, message: str) -> Optional[int]:
+        """Extract trip duration in days from the message."""
         msg_lower = message.lower()
+        special_dur = self._extract_duration_special(msg_lower)
+        if special_dur is not None:
+            return special_dur
+            
+        return self._extract_duration_patterns(message)
 
-        # Qualitative
+    def _extract_group_size_qualitative(self, msg_lower: str) -> Optional[int]:
         if re.search(r"\bsolo\b|\balone\b|\bby myself\b|\bon my own\b", msg_lower):
             return 1
         if re.search(r"\bcouple\b|\bpartner\b|\bspouse\b|\bwife\b|\bhusband\b|\bgirlfriend\b|\bboyfriend\b", msg_lower):
             return 2
         if re.search(r"\bfamily\b", msg_lower):
             return 4  # conservative default
+        return None
 
-        # Numeric group patterns
+    def _extract_group_size_patterns(self, msg_lower: str) -> Optional[int]:
         for pattern, fixed in _GROUP_PATTERNS:
             if fixed > 0:
                 if re.search(pattern, msg_lower):
@@ -333,8 +344,17 @@ class ContextExtractor:
                             return val
                     except (ValueError, IndexError):
                         continue
-
         return None
+
+    def _extract_group_size(self, message: str) -> Optional[int]:
+        """Extract the number of travelers from the message."""
+        msg_lower = message.lower()
+        
+        qualitative = self._extract_group_size_qualitative(msg_lower)
+        if qualitative is not None:
+            return qualitative
+            
+        return self._extract_group_size_patterns(msg_lower)
 
     def _extract_travel_style(self, message: str) -> Optional[str]:
         """Extract travel style from the message (maps to TravelType)."""

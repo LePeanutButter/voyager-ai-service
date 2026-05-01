@@ -19,7 +19,7 @@ Extensibility hook:
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from app.chat.schemas import ConversationMessage, TravelContext
@@ -36,8 +36,8 @@ class UserSession:
         self.max_history = max_history
         self.messages: List[ConversationMessage] = []
         self.context: TravelContext = TravelContext()
-        self.created_at: datetime = datetime.utcnow()
-        self.updated_at: datetime = datetime.utcnow()
+        self.created_at: datetime = datetime.now(timezone.utc)
+        self.updated_at: datetime = datetime.now(timezone.utc)
         self._lock: asyncio.Lock = asyncio.Lock()
 
     async def add_message(self, message: ConversationMessage) -> None:
@@ -46,20 +46,20 @@ class UserSession:
             self.messages.append(message)
             if len(self.messages) > self.max_history:
                 self.messages = self.messages[-self.max_history:]
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     async def update_context(self, partial_context: TravelContext) -> None:
         """Merge a partial context extraction into the session context."""
         async with self._lock:
             self.context = self.context.merge(partial_context)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     async def clear(self) -> None:
         """Reset the session to its initial empty state."""
         async with self._lock:
             self.messages = []
             self.context = TravelContext()
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def get_messages(self) -> List[ConversationMessage]:
         """Return a snapshot of the current message list (no lock needed for reads)."""
@@ -175,7 +175,7 @@ class ConversationMemory:
         if session is None:
             return False
         await session.clear()
-        logger.info("Cleared conversation history for user %s", user_id)
+        logger.info("Cleared conversation history")
         return True
 
     def active_session_count(self) -> int:

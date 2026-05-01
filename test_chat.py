@@ -4,8 +4,7 @@ import urllib.request, json, sys
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-
-
+BASE = 'http://localhost:8001'
 def post(path, body):
     data = json.dumps(body).encode()
     req = urllib.request.Request(
@@ -56,7 +55,7 @@ try:
     ctx = r['metadata']['context_summary']
     print("Context:", ctx)
     assert ctx['destination'] == 'Paris', "Expected Paris as destination, got: " + str(ctx['destination'])
-    assert ctx['budget_usd'] == 1500.0, "Expected 1500 budget"
+    assert abs(ctx['budget_usd'] - 1500.0) < 0.01, "Expected 1500 budget"
     assert ctx['duration_days'] == 7, "Expected 7 day duration"
 
     sep("4: Follow-up message (context retention)")
@@ -71,7 +70,7 @@ try:
     print("Reply:", r['reply'][:300])
     new_budget = r['metadata']['context_summary']['budget_usd']
     print("New budget:", new_budget)
-    assert new_budget == 400.0, "Budget not updated, got: " + str(new_budget)
+    assert abs(new_budget - 400.0) < 0.01, "Budget not updated, got: " + str(new_budget)
 
     sep("6: History endpoint")
     r = get('/api/v1/chat/testuser1/history')

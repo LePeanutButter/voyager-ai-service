@@ -7,7 +7,7 @@ interaction tracking for personalized recommendations.
 
 from typing import List, Dict, Any, Optional
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models.schemas import (
     UserProfile,
@@ -63,8 +63,8 @@ class UserService:
                 location=profile.location,
                 preferences=analyzed_preferences,
                 travel_history=profile.travel_history,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
             )
             
             # Store profile
@@ -126,7 +126,7 @@ class UserService:
             if profile_update.travel_history:
                 existing_profile.travel_history = profile_update.travel_history
             
-            existing_profile.updated_at = datetime.utcnow()
+            existing_profile.updated_at = datetime.now(timezone.utc)
             
             # Store updated profile
             self.user_profiles[user_id] = existing_profile
@@ -160,7 +160,7 @@ class UserService:
             # Analyze and update preferences
             analyzed_preferences = await self._analyze_preferences(preferences)
             existing_profile.preferences = analyzed_preferences
-            existing_profile.updated_at = datetime.utcnow()
+            existing_profile.updated_at = datetime.now(timezone.utc)
             
             # Store updated profile
             self.user_profiles[user_id] = existing_profile
@@ -260,7 +260,7 @@ class UserService:
                     'peak_activity_times': behavior_analysis['peak_activity_times']
                 },
                 'recommendation_accuracy': behavior_analysis['recommendation_accuracy'],
-                'generated_at': datetime.utcnow()
+                'generated_at': datetime.now(timezone.utc)
             }
             
             return insights

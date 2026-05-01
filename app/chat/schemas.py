@@ -7,7 +7,7 @@ and the internal data structures shared across chat sub-components.
 
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -94,7 +94,7 @@ class ConversationMessage(BaseModel):
     """A single message in the conversation history."""
     role: str                   # "user" | "assistant"
     content: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     intent: Optional[ChatIntent] = None
 
     @field_validator("role")
@@ -168,4 +168,4 @@ class ClearHistoryResponse(BaseModel):
     """Output from DELETE /api/v1/chat/{userId}/history."""
     userId: str
     message: str
-    cleared_at: datetime = Field(default_factory=datetime.utcnow)
+    cleared_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

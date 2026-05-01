@@ -7,7 +7,7 @@ for matching travelers with similar interests and preferences.
 
 from typing import List, Dict, Any, Optional
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models.schemas import (
     TravelerMatchRequest,
@@ -66,7 +66,7 @@ class MatchingService:
             response = MatchingResponse(
                 matches=final_matches,
                 user_id=request.user_id,
-                generated_at=datetime.utcnow(),
+                generated_at=datetime.now(timezone.utc),
                 total_matches=len(final_matches),
                 search_criteria={
                     'location': request.location.dict(),
@@ -137,7 +137,7 @@ class MatchingService:
                     preference_compatibility, 
                     travel_style_compatibility
                 ),
-                'calculated_at': datetime.utcnow()
+                'calculated_at': datetime.now(timezone.utc)
             }
             
             return compatibility_analysis
@@ -161,7 +161,7 @@ class MatchingService:
         try:
             logger.info(f"Initiating connection from {user_id} to {target_user_id}")
             
-            connection_id = f"conn_{user_id}_{target_user_id}_{datetime.utcnow().timestamp()}"
+            connection_id = f"conn_{user_id}_{target_user_id}_{datetime.now(timezone.utc).timestamp()}"
             
             connection = {
                 'connection_id': connection_id,
@@ -169,8 +169,8 @@ class MatchingService:
                 'target_user_id': target_user_id,
                 'message': message,
                 'status': 'pending',
-                'created_at': datetime.utcnow(),
-                'updated_at': datetime.utcnow()
+                'created_at': datetime.now(timezone.utc),
+                'updated_at': datetime.now(timezone.utc)
             }
             
             # Store connection
@@ -237,7 +237,7 @@ class MatchingService:
             # Update connection
             connection['status'] = response
             connection['response_message'] = message
-            connection['updated_at'] = datetime.utcnow()
+            connection['updated_at'] = datetime.now(timezone.utc)
             
             self.connections[connection_id] = connection
             
@@ -325,7 +325,7 @@ class MatchingService:
                 'target_user_id': target_user_id,
                 'rating': rating,
                 'feedback_text': feedback_text,
-                'timestamp': datetime.utcnow()
+                'timestamp': datetime.now(timezone.utc)
             }
             
             # In production, store in database and use for model improvement

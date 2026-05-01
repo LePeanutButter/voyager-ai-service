@@ -26,7 +26,7 @@ Current triggers:
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from app.chat.schemas import ConversationMessage, Suggestion, TravelContext
@@ -155,7 +155,7 @@ class ProactiveEngine:
 
         try:
             start = datetime.fromisoformat(context.start_date)
-            days_until = (start.date() - datetime.utcnow().date()).days
+            days_until = (start.date() - datetime.now(timezone.utc).date()).days
             if 0 <= days_until <= 7:
                 return Suggestion(
                     name="⏰ Your Trip Is Coming Up Soon!",
