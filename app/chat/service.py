@@ -194,7 +194,8 @@ class ChatService:
                 )
 
             # General planning / follow-up
-            if context.destination or context.budget_usd or context.travel_style:
+            if (context.destination or context.budget_usd or context.travel_style or 
+                context.interests or context.activity_types):
                 return self.rec_engine.generate(context, max_suggestions=max_suggs)
 
             return []

@@ -216,15 +216,34 @@ class ContextExtractor:
 
     def _extract_destination(self, message: str) -> Optional[str]:
         """Extract a destination place name from the message."""
+        # Check against known dataset for exact/substring matches first
+        known_places = [
+            "Cancun", "Tulum", "Bali", "Phuket", "Rome", "Kyoto", 
+            "Cairo", "Istanbul", "Paris", "Venice", "Santorini", "Prague",
+            "Mexico", "Italy", "France", "Indonesia", "Thailand", 
+            "Japan", "Egypt", "Turkey", "Greece", "Czech Republic"
+        ]
+        msg_lower = message.lower()
+        for place in known_places:
+            if re.search(r"\b" + re.escape(place.lower()) + r"\b", msg_lower):
+                return place
+
+        # Fallback to regex patterns if no known place is found
         for pattern in _DESTINATION_PATTERNS:
             match = re.search(pattern, message, re.IGNORECASE | re.MULTILINE)
             if match:
                 destination = match.group(1).strip().title()
-                # Filter out common false positives (short common words)
-                if len(destination) >= 3 and destination.lower() not in (
+                dest_lower = destination.lower()
+                # Filter out common false positives (short common words, verbs, adjectives)
+                invalid_words = {
                     "the", "this", "that", "my", "our", "your", "some", "any",
-                    "few", "all", "more", "less",
-                ):
+                    "few", "all", "more", "less", "beach", "cheap", "romantic",
+                    "travel", "trip", "day", "days", "vacation", "holiday", 
+                    "want", "need", "like", "love", "go", "going", "visit", 
+                    "relax", "relaxed", "relaxing", "cultural", "adventure"
+                }
+                words = dest_lower.split()
+                if len(destination) >= 3 and not any(w in invalid_words for w in words):
                     return destination
         return None
 

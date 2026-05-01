@@ -197,11 +197,18 @@ def _format_suggestions(suggestions: List["Suggestion"]) -> str:
         return ""
 
     lines: List[str] = ["Here are some recommendations:"]
-    for i, s in enumerate(suggestions[:5], start=1):
+    for i, s in enumerate(suggestions[:14], start=1):
         cost_hint = f" (~${s.estimated_cost_usd:,.0f})" if s.estimated_cost_usd else ""
-        lines.append(f"{i}. **{s.name}** — {s.activity_type}{cost_hint}")
-        if s.description:
-            lines.append(f"   {s.description}")
+        
+        # If it's a destination, format differently
+        if s.activity_type == "destination":
+            lines.append(f"• **{s.name}**")
+            if s.description:
+                lines.append(f"  {s.description}")
+        else:
+            lines.append(f"{i}. **{s.name}**{cost_hint}")
+            if s.description:
+                lines.append(f"   {s.description}")
     return "\n".join(lines)
 
 

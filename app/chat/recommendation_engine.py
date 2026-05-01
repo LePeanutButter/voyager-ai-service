@@ -1,23 +1,18 @@
 """
 Chat Recommendation Engine.
 
-Generates structured Suggestion objects from a TravelContext.
-Logic is parameterised — no hardcoded destinations or fixed suggestion lists.
+Provides context-aware, highly specific travel recommendations using an
+internal curated dataset of destinations and activities.
 
-Filtering dimensions:
-  - Budget tier  : $0-500 (budget), $500-2000 (mid-range), $2000+ (premium)
-  - Travel style : maps to preferred ActivityType clusters
-  - Duration     : controls how many suggestions to surface
-  - Group size   : adjusts solo vs group-friendly activity weighting
-
-Domain alignment with backend:
-  ActivityType: SIGHTSEEING, CULTURAL, ADVENTURE, DINING, SHOPPING,
-                ENTERTAINMENT, SPORTS, RELAXATION, EDUCATIONAL, SOCIAL
-  TravelType  : LEISURE, ADVENTURE, CULTURAL, ROMANTIC, FAMILY, SOLO, BUSINESS
+Logic:
+  - If destination is missing: Suggests destinations based on tags (e.g. beach, budget).
+  - If destination is specified: Suggests concrete activities (e.g. "Visit Colosseum").
+  - Budget: Filters or prioritizes free/cheap activities if budget is low.
+  - Duration: Distributes activities by day (approx 2 per day) if specified.
 """
 
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from app.chat.schemas import Suggestion, TravelContext
 
@@ -25,42 +20,110 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Activity catalogue — parameterised templates, not hardcoded suggestions
+# Curated Dataset
 # ---------------------------------------------------------------------------
 
-# Each entry: (activity_type, description_template, cost_budget, cost_mid, cost_premium, tags)
-_ACTIVITY_TEMPLATES: List[Tuple[str, str, float, float, float, List[str]]] = [
-    # (type,         template,                                              budget, mid,  prem, tags)
-    ("sightseeing",  "Explore iconic landmarks and local neighbourhoods",    0,    20,   80,   ["outdoors", "photography"]),
-    ("cultural",     "Visit museums, galleries, and historical sites",       10,   30,   100,  ["history", "art", "learning"]),
-    ("dining",       "Try authentic local cuisine at recommended spots",     15,   40,   120,  ["food", "local"]),
-    ("adventure",    "Experience outdoor adventures and active excursions",  30,   80,   250,  ["active", "nature"]),
-    ("relaxation",   "Relax at parks, beaches, or local wellness centres",   0,    50,   200,  ["calm", "nature"]),
-    ("shopping",     "Discover local markets, crafts, and unique souvenirs", 0,    30,   150,  ["local", "gifts"]),
-    ("entertainment","Enjoy live music, performances, or local events",      20,   50,   180,  ["nightlife", "culture"]),
-    ("sports",       "Participate in local sports or recreational activities",25,   60,   200,  ["active", "fitness"]),
-    ("educational",  "Join guided tours, cooking classes, or workshops",     15,   45,   130,  ["learning", "experience"]),
-    ("social",       "Meet locals through meetups, tours, or community events", 0, 25,   80,   ["people", "culture"]),
-]
-
-# Travel style → preferred activity types (ordered by weight)
-_STYLE_ACTIVITY_MAP: Dict[str, List[str]] = {
-    "adventure":  ["adventure", "sports", "sightseeing", "educational", "relaxation"],
-    "cultural":   ["cultural", "educational", "sightseeing", "dining", "social"],
-    "leisure":    ["relaxation", "dining", "sightseeing", "entertainment", "shopping"],
-    "romantic":   ["dining", "relaxation", "sightseeing", "entertainment", "cultural"],
-    "family":     ["sightseeing", "educational", "sports", "dining", "entertainment"],
-    "solo":       ["social", "cultural", "adventure", "sightseeing", "educational"],
-    "business":   ["dining", "sightseeing", "relaxation", "cultural", "entertainment"],
-    # Fallback ordering (used when style is unknown)
-    "default":    ["sightseeing", "cultural", "dining", "adventure", "relaxation"],
+_DESTINATIONS = {
+    "Cancun": {"country": "Mexico", "tags": ["beach", "leisure", "relaxation", "mid-range"]},
+    "Tulum": {"country": "Mexico", "tags": ["beach", "romantic", "premium", "nature"]},
+    "Bali": {"country": "Indonesia", "tags": ["beach", "romantic", "budget", "adventure"]},
+    "Phuket": {"country": "Thailand", "tags": ["beach", "leisure", "budget", "entertainment"]},
+    "Rome": {"country": "Italy", "tags": ["cultural", "sightseeing", "mid-range", "food"]},
+    "Kyoto": {"country": "Japan", "tags": ["cultural", "romantic", "premium", "relaxation"]},
+    "Cairo": {"country": "Egypt", "tags": ["cultural", "adventure", "budget", "history"]},
+    "Istanbul": {"country": "Turkey", "tags": ["cultural", "shopping", "mid-range", "food"]},
+    "Paris": {"country": "France", "tags": ["romantic", "cultural", "premium", "food"]},
+    "Venice": {"country": "Italy", "tags": ["romantic", "cultural", "premium", "sightseeing"]},
+    "Santorini": {"country": "Greece", "tags": ["romantic", "beach", "premium", "relaxation"]},
+    "Prague": {"country": "Czech Republic", "tags": ["romantic", "cultural", "budget", "sightseeing"]}
 }
 
-# Budget tier thresholds (USD, total trip budget)
-_BUDGET_TIERS = {
-    "budget":    (0,    500),
-    "mid-range": (500,  2000),
-    "premium":   (2000, float("inf")),
+_COUNTRY_MAP = {
+    "Mexico": ["Cancun", "Tulum"],
+    "Italy": ["Rome", "Venice"],
+    "France": ["Paris"],
+    "Indonesia": ["Bali"],
+    "Thailand": ["Phuket"],
+    "Japan": ["Kyoto"],
+    "Egypt": ["Cairo"],
+    "Turkey": ["Istanbul"],
+    "Greece": ["Santorini"],
+    "Czech Republic": ["Prague"]
+}
+
+_ACTIVITIES = {
+    "Cancun": [
+        {"name": "Relax at Playa Delfines", "type": "relaxation", "cost": 0, "tags": ["beach", "free"]},
+        {"name": "Explore Chichen Itza", "type": "cultural", "cost": 60, "tags": ["educational"]},
+        {"name": "Snorkel at Isla Mujeres", "type": "adventure", "cost": 45, "tags": ["active", "beach"]},
+        {"name": "Dine at La Isla Village", "type": "dining", "cost": 30, "tags": ["food", "leisure"]},
+    ],
+    "Tulum": [
+        {"name": "Relax at Playa Paraiso", "type": "relaxation", "cost": 0, "tags": ["beach", "romantic", "free"]},
+        {"name": "Visit Tulum Mayan Ruins", "type": "cultural", "cost": 10, "tags": ["sightseeing", "budget"]},
+        {"name": "Swim in Gran Cenote", "type": "adventure", "cost": 25, "tags": ["nature", "budget"]},
+        {"name": "Romantic Dinner at Hartwood", "type": "dining", "cost": 100, "tags": ["romantic", "premium"]},
+    ],
+    "Bali": [
+        {"name": "Watch sunset at Uluwatu Temple", "type": "cultural", "cost": 5, "tags": ["romantic", "budget"]},
+        {"name": "Surf at Kuta Beach", "type": "sports", "cost": 15, "tags": ["beach", "active", "budget"]},
+        {"name": "Trek Mount Batur at sunrise", "type": "adventure", "cost": 40, "tags": ["nature"]},
+        {"name": "Couples Spa Treatment in Ubud", "type": "relaxation", "cost": 30, "tags": ["romantic"]},
+    ],
+    "Phuket": [
+        {"name": "Relax at Patong Beach", "type": "relaxation", "cost": 0, "tags": ["beach", "free"]},
+        {"name": "Boat tour to Phi Phi Islands", "type": "adventure", "cost": 50, "tags": ["nature"]},
+        {"name": "Visit the Big Buddha", "type": "cultural", "cost": 0, "tags": ["sightseeing", "free"]},
+        {"name": "Explore Bangla Road Nightlife", "type": "entertainment", "cost": 20, "tags": ["social", "budget"]},
+    ],
+    "Rome": [
+        {"name": "Visit the Colosseum and Roman Forum", "type": "cultural", "cost": 20, "tags": ["sightseeing"]},
+        {"name": "Walk through Trastevere at night", "type": "social", "cost": 0, "tags": ["romantic", "free"]},
+        {"name": "Tour the Vatican Museums", "type": "cultural", "cost": 30, "tags": ["educational"]},
+        {"name": "Authentic Pasta Dinner near Piazza Navona", "type": "dining", "cost": 25, "tags": ["food", "budget"]},
+    ],
+    "Kyoto": [
+        {"name": "Walk through Fushimi Inari Shrine", "type": "cultural", "cost": 0, "tags": ["sightseeing", "free", "romantic"]},
+        {"name": "Traditional Tea Ceremony", "type": "educational", "cost": 40, "tags": ["cultural", "romantic"]},
+        {"name": "Explore Arashiyama Bamboo Grove", "type": "relaxation", "cost": 0, "tags": ["nature", "free"]},
+        {"name": "Kaiseki Dinner Experience", "type": "dining", "cost": 150, "tags": ["food", "premium", "romantic"]},
+    ],
+    "Cairo": [
+        {"name": "Visit the Pyramids of Giza", "type": "sightseeing", "cost": 15, "tags": ["cultural", "educational", "budget"]},
+        {"name": "Explore the Egyptian Museum", "type": "cultural", "cost": 10, "tags": ["history", "budget"]},
+        {"name": "Shop at Khan el-Khalili Bazaar", "type": "shopping", "cost": 5, "tags": ["social", "budget"]},
+        {"name": "Felucca Ride on the Nile at sunset", "type": "relaxation", "cost": 15, "tags": ["romantic", "budget"]},
+    ],
+    "Istanbul": [
+        {"name": "Tour the Hagia Sophia", "type": "cultural", "cost": 0, "tags": ["sightseeing", "free"]},
+        {"name": "Shop at the Grand Bazaar", "type": "shopping", "cost": 0, "tags": ["social", "free"]},
+        {"name": "Bosphorus Sunset Cruise", "type": "entertainment", "cost": 25, "tags": ["romantic", "budget"]},
+        {"name": "Traditional Turkish Bath (Hammam)", "type": "relaxation", "cost": 50, "tags": ["cultural"]},
+    ],
+    "Paris": [
+        {"name": "Eiffel Tower Sunset Viewing", "type": "sightseeing", "cost": 30, "tags": ["romantic", "premium"]},
+        {"name": "Explore the Louvre Museum", "type": "cultural", "cost": 20, "tags": ["educational"]},
+        {"name": "Romantic Seine River Cruise", "type": "entertainment", "cost": 25, "tags": ["romantic"]},
+        {"name": "Stroll and Cafe in Montmartre", "type": "leisure", "cost": 10, "tags": ["budget", "relaxation", "romantic"]},
+    ],
+    "Venice": [
+        {"name": "Private Gondola Ride", "type": "entertainment", "cost": 90, "tags": ["romantic", "premium"]},
+        {"name": "Visit St. Mark's Basilica", "type": "cultural", "cost": 0, "tags": ["sightseeing", "free"]},
+        {"name": "Explore the Doge's Palace", "type": "cultural", "cost": 30, "tags": ["educational"]},
+        {"name": "Cicchetti and Wine Tasting", "type": "dining", "cost": 25, "tags": ["food", "budget", "romantic"]},
+    ],
+    "Santorini": [
+        {"name": "Watch the sunset in Oia", "type": "relaxation", "cost": 0, "tags": ["romantic", "free"]},
+        {"name": "Catamaran Cruise in the Caldera", "type": "adventure", "cost": 120, "tags": ["premium", "nature"]},
+        {"name": "Wine Tasting at a Local Vineyard", "type": "dining", "cost": 40, "tags": ["romantic"]},
+        {"name": "Relax at the Red Beach", "type": "relaxation", "cost": 0, "tags": ["beach", "free"]},
+    ],
+    "Prague": [
+        {"name": "Walk across the Charles Bridge at dawn", "type": "sightseeing", "cost": 0, "tags": ["romantic", "free"]},
+        {"name": "Explore Prague Castle", "type": "cultural", "cost": 15, "tags": ["educational", "budget"]},
+        {"name": "Drink Local Pilsner in Old Town", "type": "dining", "cost": 10, "tags": ["budget", "social"]},
+        {"name": "Vltava River Jazz Cruise", "type": "entertainment", "cost": 35, "tags": ["romantic"]},
+    ]
 }
 
 
@@ -75,13 +138,7 @@ def _budget_tier(budget_usd: Optional[float]) -> str:
 
 
 class ChatRecommendationEngine:
-    """
-    Generates context-aware Suggestion objects from a TravelContext.
-
-    This engine is deterministic and rule-based. It does NOT call any
-    external APIs or ML models — recommendations derive entirely from
-    the logic encoded in activity templates and style mappings.
-    """
+    """Generates context-aware, specific suggestions."""
 
     def generate(
         self,
@@ -89,56 +146,15 @@ class ChatRecommendationEngine:
         max_suggestions: int = 5,
         exclude_types: Optional[List[str]] = None,
     ) -> List[Suggestion]:
-        """
-        Generate activity suggestions for the given context.
-
-        Args:
-            context        : Current trip context (destination, budget, style…).
-            max_suggestions: Max number of suggestions to return.
-            exclude_types  : Activity types to skip (e.g., already shown).
-
-        Returns:
-            List of Suggestion objects, ordered by relevance to the context.
-        """
         if max_suggestions <= 0:
             return []
 
-        exclude = set(exclude_types or [])
-        tier = _budget_tier(context.budget_usd)
-        preferred_order = self._get_preferred_order(context)
+        # If no destination is specified, suggest destinations
+        if not context.destination:
+            return self._suggest_destinations(context, max_suggestions)
 
-        # Build candidates in preference order
-        candidates: List[Suggestion] = []
-        for activity_type in preferred_order:
-            if activity_type in exclude:
-                continue
-            template = self._find_template(activity_type)
-            if template is None:
-                continue
-
-            suggestion = self._build_suggestion(template, context, tier)
-            if suggestion is not None:
-                candidates.append(suggestion)
-                if len(candidates) >= max_suggestions:
-                    break
-
-        # If we still need more, pad from remaining types
-        if len(candidates) < max_suggestions:
-            for tmpl in _ACTIVITY_TEMPLATES:
-                act_type = tmpl[0]
-                if act_type in exclude or any(s.activity_type == act_type for s in candidates):
-                    continue
-                suggestion = self._build_suggestion(tmpl, context, tier)
-                if suggestion is not None:
-                    candidates.append(suggestion)
-                    if len(candidates) >= max_suggestions:
-                        break
-
-        logger.debug(
-            "Generated %d suggestions for context (dest=%s, budget=%s, style=%s)",
-            len(candidates), context.destination, context.budget_usd, context.travel_style,
-        )
-        return candidates
+        # Otherwise, suggest specific activities
+        return self._suggest_activities(context, max_suggestions)
 
     def generate_for_activity_types(
         self,
@@ -146,133 +162,154 @@ class ChatRecommendationEngine:
         context: TravelContext,
         max_suggestions: int = 5,
     ) -> List[Suggestion]:
-        """
-        Generate suggestions restricted to specific activity types.
-        Used when the user explicitly requests a category (e.g., "adventure activities").
-        """
-        if not activity_types:
-            return self.generate(context, max_suggestions)
+        return self.generate(context, max_suggestions)
 
+    # ------------------------------------------------------------------
+    # Destination Recommendation Logic
+    # ------------------------------------------------------------------
+    def _suggest_destinations(self, context: TravelContext, limit: int) -> List[Suggestion]:
         tier = _budget_tier(context.budget_usd)
-        candidates: List[Suggestion] = []
+        
+        # Gather all tags user is interested in
+        user_tags = set(context.interests + context.activity_types)
+        if context.travel_style:
+            user_tags.add(context.travel_style)
+        
+        # Score destinations
+        scored = []
+        for dest, info in _DESTINATIONS.items():
+            score = 0
+            dest_tags = info["tags"]
+            
+            if tier in dest_tags:
+                score += 2
+            
+            # Context matching
+            for tag in user_tags:
+                if tag in dest_tags:
+                    score += 3
+            
+            scored.append((score, dest, info))
+        
+        # Sort by score descending
+        scored.sort(key=lambda x: x[0], reverse=True)
+        
+        suggestions = []
+        for score, dest, info in scored[:limit]:
+            country = info["country"]
+            suggestions.append(Suggestion(
+                name=f"{dest}, {country}",
+                activity_type="destination",
+                description=f"A fantastic {info['tags'][0]} destination. Great for {info['tags'][1]} and {info['tags'][2]}.",
+                budget_tier=tier,
+                tags=info["tags"]
+            ))
+            
+        return suggestions
 
-        for activity_type in activity_types:
-            template = self._find_template(activity_type)
-            if template is None:
+    # ------------------------------------------------------------------
+    # Activity Recommendation Logic
+    # ------------------------------------------------------------------
+    def _suggest_activities(self, context: TravelContext, limit: int) -> List[Suggestion]:
+        dest_query = context.destination.title() if context.destination else ""
+        
+        # Map country to specific cities, or try exact city match
+        target_cities = []
+        if dest_query in _COUNTRY_MAP:
+            target_cities = _COUNTRY_MAP[dest_query]
+        else:
+            # Fallback matching
+            for city, info in _DESTINATIONS.items():
+                if city in dest_query or info["country"] in dest_query:
+                    target_cities.append(city)
+            if not target_cities:
+                target_cities = [dest_query]  # Just use the query, though no specific data
+
+        # Gather activities
+        raw_activities = []
+        for city in target_cities:
+            if city in _ACTIVITIES:
+                for act in _ACTIVITIES[city]:
+                    act["city"] = city
+                    raw_activities.append(act)
+        
+        # If no activities found for this specific place, use generic fallback list
+        if not raw_activities:
+            raw_activities = [
+                {"name": f"Explore the city center of {dest_query}", "type": "sightseeing", "cost": 0, "tags": ["free", "sightseeing"], "city": dest_query},
+                {"name": f"Dine at a local restaurant in {dest_query}", "type": "dining", "cost": 30, "tags": ["food", "local"], "city": dest_query},
+                {"name": f"Visit the main cultural district in {dest_query}", "type": "cultural", "cost": 15, "tags": ["educational", "cultural"], "city": dest_query},
+                {"name": f"Relax in the prominent parks of {dest_query}", "type": "relaxation", "cost": 0, "tags": ["free", "nature"], "city": dest_query},
+                {"name": f"Experience the evening atmosphere in {dest_query}", "type": "entertainment", "cost": 25, "tags": ["social", "nightlife"], "city": dest_query}
+            ]
+
+        # Filter by budget
+        tier = _budget_tier(context.budget_usd)
+        is_low_budget = context.budget_usd is not None and context.budget_usd < 500
+        group_size = context.group_size or 1
+
+        filtered = []
+        for act in raw_activities:
+            # If extremely low budget, skip very expensive single activities
+            if is_low_budget and act["cost"] * group_size > 100:
                 continue
-            suggestion = self._build_suggestion(template, context, tier)
-            if suggestion:
-                candidates.append(suggestion)
+            filtered.append(act)
 
-        # Fill remaining slots from general generation
-        if len(candidates) < max_suggestions:
-            extra = self.generate(
-                context,
-                max_suggestions - len(candidates),
-                exclude_types=[s.activity_type for s in candidates],
-            )
-            candidates.extend(extra)
+        # Sort activities: prioritize "free"/"budget" if low budget, otherwise by match
+        user_tags = set(context.interests + context.activity_types)
+        if context.travel_style:
+            user_tags.add(context.travel_style)
 
-        return candidates[:max_suggestions]
+        def score_act(act):
+            score = 0
+            if is_low_budget and ("free" in act["tags"] or "budget" in act["tags"] or act["cost"] == 0):
+                score += 10
+            for tag in user_tags:
+                if tag in act["tags"] or tag == act["type"]:
+                    score += 5
+            return score
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
+        filtered.sort(key=score_act, reverse=True)
 
-    def _get_preferred_order(self, context: TravelContext) -> List[str]:
-        """Return activity types ordered by preference for this context."""
-        style = (context.travel_style or "default").lower()
+        # Assign per day if duration exists
+        suggestions = []
+        if context.duration_days and context.duration_days > 0:
+            day = 1
+            count = 0
+            acts_per_day = 2
+            
+            for act in filtered:
+                sugg_name = f"Day {day}: {act['name']} ({act['city']})" if len(target_cities) > 1 else f"Day {day}: {act['name']}"
+                desc = f"A fantastic {act['type']} experience. Estimated cost: ${act['cost']}" if act['cost'] > 0 else f"A fantastic free {act['type']} experience."
+                
+                suggestions.append(Suggestion(
+                    name=sugg_name,
+                    activity_type=act["type"],
+                    description=desc,
+                    estimated_cost_usd=act["cost"] * group_size if act["cost"] > 0 else 0.0,
+                    budget_tier=tier,
+                    tags=act["tags"]
+                ))
+                
+                count += 1
+                if count >= acts_per_day:
+                    day += 1
+                    count = 0
+                    if day > context.duration_days:
+                        break
+                        
+        else:
+            # No duration, just return top list
+            for act in filtered[:limit]:
+                sugg_name = f"{act['name']} ({act['city']})" if len(target_cities) > 1 else act['name']
+                desc = f"A fantastic {act['type']} experience. Estimated cost: ${act['cost']}" if act['cost'] > 0 else f"A fantastic free {act['type']} experience."
+                suggestions.append(Suggestion(
+                    name=sugg_name,
+                    activity_type=act["type"],
+                    description=desc,
+                    estimated_cost_usd=act["cost"] * group_size if act["cost"] > 0 else 0.0,
+                    budget_tier=tier,
+                    tags=act["tags"]
+                ))
 
-        # If user expressed explicit activity_types, prioritise them
-        if context.activity_types:
-            remaining = [t for t in _STYLE_ACTIVITY_MAP.get(style, _STYLE_ACTIVITY_MAP["default"])
-                         if t not in context.activity_types]
-            return context.activity_types + remaining
-
-        return _STYLE_ACTIVITY_MAP.get(style, _STYLE_ACTIVITY_MAP["default"])
-
-    def _find_template(self, activity_type: str) -> Optional[tuple]:
-        """Find the template tuple for a given activity type."""
-        for tmpl in _ACTIVITY_TEMPLATES:
-            if tmpl[0] == activity_type:
-                return tmpl
-        return None
-
-    def _build_suggestion(
-        self,
-        template: tuple,
-        context: TravelContext,
-        tier: str,
-    ) -> Optional[Suggestion]:
-        """
-        Construct a Suggestion from a template + context.
-
-        Cost is parameterised per-person per-activity; the full trip cost
-        considers group size and duration to ensure it fits the budget.
-        """
-        act_type, description_tmpl, cost_b, cost_m, cost_p, tags = template
-
-        # Select per-activity cost based on tier
-        cost_map = {"budget": cost_b, "mid-range": cost_m, "premium": cost_p}
-        per_person_cost = cost_map.get(tier, cost_m)
-
-        # Scale by group size (shared activities cost less per person)
-        group = max(context.group_size or 1, 1)
-        if group > 1:
-            per_person_cost = per_person_cost * (1 + (group - 1) * 0.7) / group
-
-        # Budget gate: skip if this single activity exceeds 30% of total budget
-        if context.budget_usd and per_person_cost * group > context.budget_usd * 0.30:
-            if tier == "premium":
-                # For premium, still include but note cost
-                pass
-            else:
-                return None  # Activity too expensive relative to budget
-
-        # Personalise description with destination
-        destination_phrase = f" in {context.destination}" if context.destination else ""
-        full_description = f"{description_tmpl}{destination_phrase}."
-
-        # Add budget-appropriate qualifier
-        if tier == "budget" and per_person_cost == 0:
-            full_description += " Free admission available."
-        elif tier == "budget":
-            full_description += " Many low-cost options available."
-
-        return Suggestion(
-            name=_activity_display_name(act_type, context.destination),
-            activity_type=act_type,
-            description=full_description,
-            estimated_cost_usd=round(per_person_cost, 0) if per_person_cost > 0 else None,
-            duration_hours=_typical_duration(act_type),
-            budget_tier=tier,
-            tags=tags,
-        )
-
-
-def _activity_display_name(activity_type: str, destination: Optional[str]) -> str:
-    """Generate a display name for an activity suggestion."""
-    location_suffix = f" — {destination}" if destination else ""
-    names = {
-        "sightseeing":   f"Sightseeing & Exploration{location_suffix}",
-        "cultural":      f"Cultural Experiences{location_suffix}",
-        "dining":        f"Local Dining & Cuisine{location_suffix}",
-        "adventure":     f"Adventure Activities{location_suffix}",
-        "relaxation":    f"Relaxation & Wellness{location_suffix}",
-        "shopping":      f"Shopping & Markets{location_suffix}",
-        "entertainment": f"Entertainment & Nightlife{location_suffix}",
-        "sports":        f"Sports & Recreation{location_suffix}",
-        "educational":   f"Guided Tours & Workshops{location_suffix}",
-        "social":        f"Social Experiences & Meetups{location_suffix}",
-    }
-    return names.get(activity_type, f"{activity_type.title()}{location_suffix}")
-
-
-def _typical_duration(activity_type: str) -> Optional[float]:
-    """Return typical duration (hours) for an activity type."""
-    durations = {
-        "sightseeing": 3.0, "cultural": 2.5, "dining": 1.5,
-        "adventure": 4.0, "relaxation": 2.0, "shopping": 2.0,
-        "entertainment": 2.5, "sports": 2.0, "educational": 2.0, "social": 2.0,
-    }
-    return durations.get(activity_type)
+        return suggestions
