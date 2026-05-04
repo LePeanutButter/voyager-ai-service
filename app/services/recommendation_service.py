@@ -69,12 +69,17 @@ class RecommendationService:
                 user_profile
             )
             
+            confidence_scores = []
+            for act in final_recommendations:
+                data = act.model_dump()
+                confidence_scores.append(float(data.get("confidence_score") or 0.0))
+
             response = RecommendationResponse(
                 recommendations=final_recommendations,
                 user_id=request.user_id,
                 generated_at=datetime.now(timezone.utc),
                 total_results=len(final_recommendations),
-                confidence_scores=[act.get('confidence_score', 0.0) for act in final_recommendations],
+                confidence_scores=confidence_scores,
                 explanation=explanation
             )
             
