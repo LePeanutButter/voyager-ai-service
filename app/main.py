@@ -19,6 +19,8 @@ import logging
 from app.core.config import settings
 from app.routes import recommendations, users, matching
 from app.ml.model_loader import ModelManager
+from app.chat.router import router as chat_router
+from app.chat.service import ChatService
 
 
 # Configure logging
@@ -36,6 +38,11 @@ async def lifespan(app: FastAPI):
     model_manager = ModelManager()
     await model_manager.load_models()
     app.state.model_manager = model_manager
+
+    # Initialize ChatService singleton (holds in-memory conversation store)
+    chat_service = ChatService()
+    app.state.chat_service = chat_service
+    logger.info("ChatService initialised (LLM provider: %s)", settings.LLM_PROVIDER)
     
     logger.info("Service startup completed successfully")
     yield
@@ -47,7 +54,7 @@ async def lifespan(app: FastAPI):
 # Create FastAPI application with lifespan management
 app = FastAPI(
     title="Tourism Assistant API",
-    description="AI-powered microservice for personalized travel recommendations and traveler matching",
+    description=settings.SERVICE_DESCRIPTION,
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs",
@@ -80,6 +87,13 @@ app.include_router(
     matching.router,
     prefix="/api/v1/matching",
     tags=["matching"]
+)
+
+# Chat router — AI Travel Chatbot
+app.include_router(
+    chat_router,
+    prefix="/api/v1/chat",
+    tags=["chat"]
 )
 
 

@@ -8,7 +8,7 @@ business rules for generating personalized travel recommendations.
 from typing import List, Dict, Any, Optional
 import logging
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models.schemas import (
     RecommendationRequest,
@@ -72,7 +72,7 @@ class RecommendationService:
             response = RecommendationResponse(
                 recommendations=final_recommendations,
                 user_id=request.user_id,
-                generated_at=datetime.utcnow(),
+                generated_at=datetime.now(timezone.utc),
                 total_results=len(final_recommendations),
                 confidence_scores=[act.get('confidence_score', 0.0) for act in final_recommendations],
                 explanation=explanation
@@ -216,7 +216,7 @@ class RecommendationService:
                 'activity_id': activity_id,
                 'rating': rating,
                 'feedback_text': feedback_text,
-                'timestamp': datetime.utcnow()
+                'timestamp': datetime.now(timezone.utc)
             }
             
             logger.info(f"Recorded feedback: {feedback_data}")
