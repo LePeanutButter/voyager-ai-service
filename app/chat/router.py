@@ -13,7 +13,6 @@ Rate limiting: Not implemented here; apply at the gateway layer.
 import logging
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import JSONResponse
 
 from app.chat.schemas import (
     ChatRequest,
@@ -64,7 +63,7 @@ def get_chat_service(request: Request) -> ChatService:
     ),
     responses={
         200: {"description": "Successful chat response with reply and suggestions"},
-        400: {"description": "Invalid request (empty message or userId)"},
+        422: {"description": "Validation error (missing/invalid userId or message)"},
         503: {"description": "Chat service unavailable"},
     },
 )

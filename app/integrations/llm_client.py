@@ -21,7 +21,6 @@ Design decisions:
     class only handles transport and parsing.
 """
 
-import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -56,7 +55,6 @@ class LLMClient:
         self.api_key = settings.LLM_API_KEY
         self.max_tokens = settings.LLM_MAX_TOKENS
         self.temperature = settings.LLM_TEMPERATURE
-        self._http: Optional[httpx.AsyncClient] = None
 
     # ------------------------------------------------------------------
     # Public interface

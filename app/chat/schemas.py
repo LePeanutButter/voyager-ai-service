@@ -67,7 +67,7 @@ class TravelContext(BaseModel):
             result.budget_usd = other.budget_usd
         if other.duration_days is not None:
             result.duration_days = other.duration_days
-        if other.group_size and other.group_size > 1:
+        if "group_size" in other.model_fields_set and other.group_size is not None:
             result.group_size = other.group_size
         if other.travel_style:
             result.travel_style = other.travel_style

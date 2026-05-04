@@ -1,10 +1,10 @@
-import urllib.request, json, sys
+import urllib.request, json, sys, os
 
 # Force UTF-8 output on Windows to handle emoji in replies
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-BASE = 'http://localhost:8001'
+BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get('BASE_URL', 'http://localhost:8000')
 def post(path, body):
     data = json.dumps(body).encode()
     req = urllib.request.Request(

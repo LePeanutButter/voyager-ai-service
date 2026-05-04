@@ -73,4 +73,4 @@ def _budget_tier(budget_usd: float) -> str:
         return "mid-range ($1000–$2000) — 3-star hotels, comfortable experiences"
     if budget_usd < 5000:
         return "upper mid-range ($2000–$5000) — 4-star hotels, guided tours"
-    return f"premium (>${budget_usd:,.0f}) — luxury hotels, exclusive experiences"
+    return "premium (>$5,000) — luxury hotels, exclusive experiences"

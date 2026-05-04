@@ -16,8 +16,10 @@ Design:
     are called directly in the event loop (no CPU-intensive work).
   - Defensive: every stage has try/except so partial failures degrade
     gracefully rather than crashing the endpoint.
-  - Singleton-friendly: all state is external (ConversationMemory);
-    ChatService itself is stateless and can be instantiated per-request.
+  - Singleton-friendly: ChatService owns or holds references to shared
+    in-memory components (including ConversationMemory) and is intended
+    to be created once and reused across requests, not instantiated
+    per-request.
 """
 
 import logging
@@ -107,7 +109,7 @@ class ChatService:
         all_suggestions = suggestions + proactive
 
         # ── Step 7: Generate natural-language reply ──────────────────────
-        reply = await self._generate_reply(
+        reply, llm_used = await self._generate_reply(
             intent=intent,
             message=message,
             context=context,
@@ -125,7 +127,7 @@ class ChatService:
         metadata = self._build_metadata(
             intent=intent,
             context=context,
-            llm_used=False,  # updated in _generate_reply if LLM succeeded
+            llm_used=llm_used,
             message_number=self.memory.message_count(user_id),
         )
 
@@ -221,22 +223,25 @@ class ChatService:
         history: List[ConversationMessage],
         is_first: bool,
         old_budget: Optional[float],
-    ) -> str:
+    ) -> tuple[str, bool]:
         """
         Generate the natural-language reply.
 
         Tries the LLM first (if configured); falls back to rule-based on any failure.
+
+        Returns:
+            (reply_text, llm_used) — llm_used is True when the LLM produced the reply.
         """
         # Handle greeting without LLM
         if intent == ChatIntent.GREETING:
-            return rule_based.build_greeting_reply()
+            return rule_based.build_greeting_reply(), False
 
         # --- LLM path (skip if provider == "none") ---
         if self.llm_client.is_available():
             try:
                 llm_reply = await self._call_llm(intent, message, context, history, old_budget)
                 if llm_reply:
-                    return llm_reply
+                    return llm_reply, True
             except LLMUnavailableError as exc:
                 logger.warning("LLM unavailable, falling back to rule-based: %s", exc)
             except Exception as exc:
@@ -250,7 +255,7 @@ class ChatService:
             suggestions=suggestions,
             is_first=is_first,
             old_budget=old_budget,
-        )
+        ), False
 
     async def _call_llm(
         self,
@@ -275,19 +280,31 @@ class ChatService:
             )
             return await self.llm_client.complete(system=system, user_message=user_prompt)
 
-        # Multi-turn follow-up — inject full history
-        if not self.memory.is_first_message(context.destination or ""):
+        # Multi-turn follow-up — inject history when prior messages exist
+        if history_dicts:
             system = follow_up_prompt.SYSTEM_PROMPT
             from app.chat.schemas import ConversationMessage as CM
+
+            # Exclude the latest user message from history to avoid duplicating
+            # it: the user_prompt already embeds the message under
+            # "## Latest User Message".
+            follow_up_history_dicts = history_dicts
+            if (
+                follow_up_history_dicts
+                and follow_up_history_dicts[-1]["role"] == "user"
+                and follow_up_history_dicts[-1]["content"] == message
+            ):
+                follow_up_history_dicts = follow_up_history_dicts[:-1]
+
             user_prompt = follow_up_prompt.render_follow_up_prompt(
                 user_message=message,
                 context=context,
                 recent_history=[CM(**m) for m in [{"role": h["role"], "content": h["content"]}
-                                                    for h in history_dicts]],
+                                                    for h in follow_up_history_dicts]],
             )
             return await self.llm_client.complete_with_history(
                 system=system,
-                messages=history_dicts + [{"role": "user", "content": user_prompt}],
+                messages=follow_up_history_dicts + [{"role": "user", "content": user_prompt}],
             )
 
         # Initial planning message

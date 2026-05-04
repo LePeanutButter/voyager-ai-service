@@ -51,12 +51,12 @@ _BUDGET_PATTERNS: List[Tuple[str, float]] = [
 ]
 
 # Duration extraction patterns → (regex, days_multiplier)
+# NOTE: _extract_duration_patterns() expects match.group(1) to be a numeric
+# string and converts it with int(). Keep only patterns that satisfy that
+# contract here. Non-numeric phrases (e.g. "a week", "a couple of days") are
+# handled separately by _extract_duration_special().
 _DURATION_PATTERNS: List[Tuple[str, int]] = [
     (r"(\d+)\s*-?\s*(?:days?|nights?)", 1),
-    (r"(a|one)\s*-?\s*(?:week)", 7),
-    (r"(a|one)\s*-?\s*(?:month)", 30),
-    (r"a\s*(?:couple of)\s*(?:days?|nights?)", 2),
-    (r"a\s*(?:few)\s*(?:days?|nights?)", 3),
     (r"(\d+)\s*-?\s*(?:weeks?)", 7),
 ]
 
@@ -146,8 +146,8 @@ class ContextExtractor:
             return ChatIntent.UNKNOWN, TravelContext()
 
         try:
-            intent = self._classify_intent(message)
             context = self._extract_context(message)
+            intent = self._classify_intent(message, context)
             return intent, context
         except Exception as exc:
             logger.warning("Context extraction error (non-fatal): %s", exc, exc_info=True)
@@ -157,7 +157,9 @@ class ContextExtractor:
     # Intent classification
     # ------------------------------------------------------------------
 
-    def _classify_intent(self, message: str) -> ChatIntent:
+    def _classify_intent(
+        self, message: str, context: Optional["TravelContext"] = None
+    ) -> ChatIntent:
         msg = message.strip().lower()
 
         if _GREETING_PATTERNS.match(msg):
@@ -183,7 +185,7 @@ class ContextExtractor:
             return ChatIntent.DESTINATION_QUERY
 
         # If we extracted context fields, it's likely a travel planning message
-        ctx = self._extract_context(message)
+        ctx = context if context is not None else self._extract_context(message)
         if ctx.destination or ctx.budget_usd or ctx.duration_days:
             return ChatIntent.TRAVEL_PLANNING
 

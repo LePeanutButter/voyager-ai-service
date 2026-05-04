@@ -12,7 +12,7 @@ Logic:
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from app.chat.schemas import Suggestion, TravelContext
 
@@ -187,7 +187,6 @@ class ChatRecommendationEngine:
     ) -> List[Suggestion]:
         is_low_budget = context.budget_usd is not None and context.budget_usd < 500
         suggestions = []
-        target_cities = [dest_query]
 
         country = _DESTINATIONS.get(dest_query, {}).get("country", "")
         dest_display = f"{dest_query}, {country}" if country and country not in dest_query else dest_query
