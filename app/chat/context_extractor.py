@@ -158,7 +158,7 @@ class ContextExtractor:
     # ------------------------------------------------------------------
 
     def _classify_intent(
-        self, message: str, context: Optional["TravelContext"] = None
+        self, message: str, context: Optional[TravelContext] = None
     ) -> ChatIntent:
         msg = message.strip().lower()
 

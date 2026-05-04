@@ -24,7 +24,7 @@ Design:
 
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from app.chat.context_extractor import ContextExtractor
 from app.chat.memory import ConversationMemory
@@ -223,7 +223,7 @@ class ChatService:
         history: List[ConversationMessage],
         is_first: bool,
         old_budget: Optional[float],
-    ) -> tuple[str, bool]:
+    ) -> Tuple[str, bool]:
         """
         Generate the natural-language reply.
 
