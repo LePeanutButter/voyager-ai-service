@@ -1,4 +1,12 @@
-"""REST endpoints for the adaptive travel preference questionnaire."""
+"""REST endpoints for the adaptive travel preference questionnaire.
+
+Responsibilities:
+    Step-by-step (`/questionnaire/step`) and final submit (`/questionnaire/submit`)
+    over in-memory sessions managed by `PreferenceQuestionnaireService`.
+
+Dependencies:
+    `PreferenceQuestionnaireServiceDep`, schemas in `app.modules.preferences.schemas`.
+"""
 
 from __future__ import annotations
 
@@ -27,6 +35,18 @@ async def questionnaire_step(
     body: QuestionnaireStepRequest,
     service: PreferenceQuestionnaireServiceDep,
 ) -> QuestionnaireStepResponse:
+    """Processes one questionnaire step (creates session or advances questions).
+
+    Args:
+        body: User id, optional session id, and step answers.
+        service: Questionnaire orchestrator.
+
+    Returns:
+        Next question block or questionnaire-complete flag.
+
+    Raises:
+        HTTPException: 400 on business `ValueError`; 500 on unexpected errors.
+    """
     try:
         return await service.process_step(body)
     except ValueError as exc:
@@ -49,6 +69,18 @@ async def questionnaire_submit(
     body: QuestionnaireSubmitRequest,
     service: PreferenceQuestionnaireServiceDep,
 ) -> QuestionnaireSubmitResponse:
+    """Closes the questionnaire and returns the aggregated profile when complete.
+
+    Args:
+        body: User, session, and final accumulated answers.
+        service: Questionnaire orchestrator.
+
+    Returns:
+        AI-facing profile and text summary.
+
+    Raises:
+        HTTPException: 400 if incomplete or invalid session; 500 on other errors.
+    """
     try:
         return await service.submit(body)
     except ValueError as exc:

@@ -1,3 +1,12 @@
+"""Pydantic schemas for travel trends, segments, and weekly digest.
+
+Purpose:
+    Model emerging destinations, segment insights, and partner notifications.
+
+Dependencies:
+    ``pydantic``, standard ``datetime`` and collection types.
+"""
+
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -5,6 +14,8 @@ from pydantic import BaseModel, Field
 
 
 class EmergingDestinationTrend(BaseModel):
+    """Aggregated interest volume series and emerging classification."""
+
     destination_id: str
     name: str
     country: str
@@ -18,6 +29,8 @@ class EmergingDestinationTrend(BaseModel):
 
 
 class TrendsDashboardResponse(BaseModel):
+    """Panel view with filtered emerging destinations and text summary."""
+
     generated_at: datetime
     window_days: int
     emerging_destinations: List[EmergingDestinationTrend]
@@ -25,12 +38,16 @@ class TrendsDashboardResponse(BaseModel):
 
 
 class SeasonalPattern(BaseModel):
+    """Seasonal pattern with peak months and normalized intensity."""
+
     label: str
     intensity: float = Field(..., ge=0.0, le=1.0)
     months_peak: List[int] = Field(default_factory=list)
 
 
 class SegmentBehaviorInsight(BaseModel):
+    """Predictive behavior snapshot for a traveler segment."""
+
     segment_id: str
     segment_label: str
     seasonal_patterns: List[SeasonalPattern]
@@ -40,11 +57,15 @@ class SegmentBehaviorInsight(BaseModel):
 
 
 class SegmentInsightsResponse(BaseModel):
+    """Wrapper with generation metadata and a single insight."""
+
     generated_at: datetime
     insights: SegmentBehaviorInsight
 
 
 class MicroTrendOpportunity(BaseModel):
+    """Business opportunity from a detected micro-trend."""
+
     trend_id: str
     title: str
     affected_segments: List[str] = Field(default_factory=list)
@@ -53,10 +74,12 @@ class MicroTrendOpportunity(BaseModel):
 
 
 class PartnerTrendNotification(BaseModel):
+    """Message to a partner profile with weekly anchor."""
+
     notification_id: str
     target_partner_profile: str = Field(
         ...,
-        description="Hint de segmento de empresa (p.ej. touroperadores premium)",
+        description="Company segment hint (e.g. premium tour operators)",
     )
     micro_trend_id: str
     message: str
@@ -64,7 +87,9 @@ class PartnerTrendNotification(BaseModel):
 
 
 class WeeklyTrendsDigestResponse(BaseModel):
+    """Weekly digest with micro-trends and simulated commercial notices."""
+
     generated_at: datetime
     micro_trends: List[MicroTrendOpportunity]
     partner_notifications: List[PartnerTrendNotification]
-    next_refresh_note: str = "Análisis programable semanal (sustituir por job + cola en producción)."
+    next_refresh_note: str = "Schedulable weekly analysis (replace with job + queue in production)."

@@ -1,24 +1,23 @@
-"""
-LLM Client abstraction layer.
+"""Unified async client for calling large language models (LLMs).
 
-Provides a unified async interface for calling Large Language Models,
-with support for multiple providers (OpenAI-compatible, Ollama) and a
-graceful "none" mode that falls through to the rule-based fallback.
+Purpose:
+    Abstract HTTP transport to OpenAI-compatible or Ollama providers,
+    and support ``none`` mode with no remote calls.
 
-Configuration (via environment / .env):
-    LLM_PROVIDER   : "openai" | "ollama" | "none"   (default: "none")
-    LLM_API_KEY    : API key for OpenAI-compatible providers
-    LLM_BASE_URL   : Base URL (default: "https://api.openai.com/v1")
-    LLM_MODEL      : Model name (default: "gpt-4o-mini")
-    LLM_MAX_TOKENS : Max tokens in response (default: 1024)
-    LLM_TEMPERATURE: Sampling temperature (default: 0.7)
+Responsibilities:
+    Build chat messages, dispatch by provider, parse responses, and map failures
+    to ``LLMUnavailableError`` for controlled degradation.
 
-Design decisions:
-  - All I/O is async (httpx.AsyncClient) to match FastAPI's event loop.
-  - Errors are caught and surfaced as LLMUnavailableError so callers
-    can safely fall back to rule-based responses.
-  - Prompt construction is delegated to the `prompts/` package; this
-    class only handles transport and parsing.
+Dependencies:
+    ``httpx`` (async client), ``app.core.config.settings`` for URL, model,
+    temperature, and keys.
+
+Configuration (environment / ``.env``):
+    ``LLM_PROVIDER`` (``openai`` | ``ollama`` | ``none``), ``LLM_API_KEY``,
+    ``LLM_BASE_URL``, ``LLM_MODEL``, ``LLM_MAX_TOKENS``, ``LLM_TEMPERATURE``.
+
+Design note:
+    Detailed prompt construction lives in ``app.prompts``; this module handles I/O only.
 """
 
 import logging
@@ -32,20 +31,19 @@ logger = logging.getLogger(__name__)
 
 
 class LLMUnavailableError(Exception):
-    """Raised when the LLM backend is unreachable or returns an error."""
+    """The LLM backend is unavailable or returned an error."""
 
 
 class LLMClient:
-    """
-    Async LLM client with provider abstraction.
+    """Async LLM client with provider selection from configuration.
 
-    Usage:
-        client = LLMClient()
-        reply = await client.complete(
-            system="You are a travel assistant.",
-            user_message="Plan a trip to Tokyo."
-        )
-        # Falls back to None if provider == "none" or request fails.
+    Important attributes:
+        provider: Lowercase-normalized provider name.
+        model: Remote model name.
+        base_url: Base URL without trailing slash.
+        api_key: Credential for OpenAI-style APIs.
+        max_tokens: Output token limit.
+        temperature: Sampling temperature.
     """
 
     def __init__(self) -> None:
@@ -66,17 +64,18 @@ class LLMClient:
         user_message: str,
         extra_context: Optional[str] = None,
     ) -> Optional[str]:
-        """
-        Generate a completion for a single user message.
+        """Generates a completion for a single user message.
 
         Args:
-            system        : System prompt defining assistant behaviour.
-            user_message  : The user's latest message.
-            extra_context : Optional additional text injected as an
-                            assistant-side context block before generation.
+            system: System prompt defining behavior.
+            user_message: Latest user message.
+            extra_context: Optional text injected as a prior ``assistant`` turn.
 
         Returns:
-            Generated text string, or None if provider is "none" / call fails.
+            Generated text, or ``None`` if provider is ``none`` (or per caller flow).
+
+        Raises:
+            LLMUnavailableError: On recoverable provider failures (may wrap generic errors).
         """
         if self.provider == "none":
             return None
@@ -93,15 +92,17 @@ class LLMClient:
         system: str,
         messages: List[Dict[str, str]],
     ) -> Optional[str]:
-        """
-        Generate a completion given a full message history.
+        """Generates a completion from a full message history.
 
         Args:
-            system   : System prompt.
-            messages : List of {"role": "user"|"assistant", "content": str} dicts.
+            system: System prompt.
+            messages: List of ``role`` / ``content`` dicts (user or assistant).
 
         Returns:
-            Generated text string, or None if provider is "none" / call fails.
+            Generated text or ``None`` if provider is ``none``.
+
+        Raises:
+            LLMUnavailableError: Network or provider API errors.
         """
         if self.provider == "none":
             return None
@@ -114,7 +115,17 @@ class LLMClient:
     # ------------------------------------------------------------------
 
     async def _dispatch(self, messages: List[Dict[str, str]]) -> Optional[str]:
-        """Route to the appropriate provider implementation."""
+        """Routes the request to the configured provider.
+
+        Args:
+            messages: Full sequence including system.
+
+        Returns:
+            Assistant message content or ``None`` if provider is unsupported.
+
+        Raises:
+            LLMUnavailableError: After HTTP, connection, or unexpected errors.
+        """
         try:
             if self.provider in ("openai", "openai_compatible"):
                 return await self._call_openai_compatible(messages)
@@ -134,7 +145,17 @@ class LLMClient:
     async def _call_openai_compatible(
         self, messages: List[Dict[str, str]]
     ) -> Optional[str]:
-        """Call an OpenAI-compatible Chat Completions endpoint."""
+        """Calls an OpenAI-compatible Chat Completions endpoint.
+
+        Args:
+            messages: API ``messages`` body.
+
+        Returns:
+            Text content of the first choice.
+
+        Raises:
+            LLMUnavailableError: Non-success HTTP status or connection failure.
+        """
         url = f"{self.base_url}/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -165,7 +186,17 @@ class LLMClient:
                 raise LLMUnavailableError("Cannot reach LLM provider") from exc
 
     async def _call_ollama(self, messages: List[Dict[str, str]]) -> Optional[str]:
-        """Call a local Ollama Chat API endpoint."""
+        """Calls the local Ollama Chat API.
+
+        Args:
+            messages: History for the ``/api/chat`` endpoint.
+
+        Returns:
+            Returned message content.
+
+        Raises:
+            LLMUnavailableError: HTTP or connection errors.
+        """
         url = f"{self.base_url}/api/chat"
         payload: Dict[str, Any] = {
             "model": self.model,
@@ -197,5 +228,9 @@ class LLMClient:
     # ------------------------------------------------------------------
 
     def is_available(self) -> bool:
-        """Return True if a real LLM provider is configured."""
+        """Whether a real provider is configured and usable.
+
+        Returns:
+            ``True`` except in ``none`` mode; Ollama does not require an API key.
+        """
         return self.provider != "none" and bool(self.api_key or self.provider == "ollama")

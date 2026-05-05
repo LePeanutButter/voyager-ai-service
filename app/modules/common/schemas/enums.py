@@ -1,7 +1,18 @@
+"""Shared enumerations (preferences, activity types, weather, etc.).
+
+Responsibilities:
+    Centralize valid values aligned with the travel and tracking domain.
+
+Dependencies:
+    Standard library `enum` only.
+"""
+
 from enum import Enum
 
 
 class TravelPreference(str, Enum):
+    """Travel preference axis for the user."""
+
     CULTURAL = "cultural"
     FOODIE = "foodie"
     ADVENTURE = "adventure"
@@ -11,6 +22,8 @@ class TravelPreference(str, Enum):
 
 
 class ActivityType(str, Enum):
+    """Tourism activity category."""
+
     CULTURAL = "cultural"
     OUTDOOR = "outdoor"
     FOOD = "food"
@@ -23,6 +36,8 @@ class ActivityType(str, Enum):
 
 
 class WeatherCondition(str, Enum):
+    """Weather condition for contextual recommendations."""
+
     CLEAR = "clear"
     CLOUDY = "cloudy"
     RAIN = "rain"
@@ -33,11 +48,15 @@ class WeatherCondition(str, Enum):
 
 
 class ConnectionOutcome(str, Enum):
+    """Explicit outcome after interacting with a match (learning)."""
+
     SUCCESS = "success"
     INCOMPATIBLE = "incompatible"
 
 
 class InteractionType(str, Enum):
+    """User behavior event type."""
+
     VIEW = "view"
     CLICK = "click"
     BOOKMARK = "bookmark"
@@ -50,6 +69,8 @@ class InteractionType(str, Enum):
 
 
 class NavItemTier(str, Enum):
+    """Prominence level of an adaptive navigation item."""
+
     PRIMARY = "primary"
     SECONDARY = "secondary"
     OVERFLOW = "overflow"

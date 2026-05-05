@@ -1,10 +1,14 @@
-"""
-Budget adjustment prompt template.
+"""Prompt templates for budget adjustment with an LLM.
 
-Used when the LLM needs to generate a response that specifically acknowledges
-a budget change and recalibrates its recommendations accordingly.
-"""
+Purpose:
+    Guide the model to acknowledge budget changes and recalibrate recommendations.
 
+Responsibilities:
+    Expose ``SYSTEM_PROMPT`` and ``render_budget_adjustment_prompt`` with spend bands.
+
+Dependencies:
+    ``TravelContext`` (conditional typing only).
+"""
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -28,17 +32,16 @@ def render_budget_adjustment_prompt(
     old_budget_usd: Optional[float],
     new_budget_usd: float,
 ) -> str:
-    """
-    Build the prompt for a budget-change response.
+    """Builds the user prompt after a budget change is detected.
 
     Args:
-        user_message  : The raw user message that triggered the budget update.
-        context       : Updated travel context with the new budget.
-        old_budget_usd: Previous budget (None if not previously set).
-        new_budget_usd: The new budget value.
+        user_message: Message that triggered the update.
+        context: Context already updated with the new budget.
+        old_budget_usd: Previous value, or ``None`` if none.
+        new_budget_usd: New amount in USD.
 
     Returns:
-        Formatted prompt string.
+        String with ``## Budget Update`` blocks and user message.
     """
     budget_change_desc = (
         f"Changed from ${old_budget_usd:,.0f} to ${new_budget_usd:,.0f}"
@@ -63,6 +66,14 @@ def render_budget_adjustment_prompt(
 
 
 def _budget_tier(budget_usd: float) -> str:
+    """Describes the qualitative budget band for the prompt.
+
+    Args:
+        budget_usd: Amount in USD (non-null).
+
+    Returns:
+        Text label with range and spending-style hints.
+    """
     if budget_usd < 300:
         return "very budget (<$300) — hostels, street food, free attractions"
     if budget_usd < 500:

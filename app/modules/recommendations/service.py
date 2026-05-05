@@ -1,8 +1,16 @@
-"""
-Recommendation service for personalized travel suggestions.
+"""Personalized travel recommendations, destinations, and contextual activities.
 
-Implements the core recommendation logic using ML models and
-business rules for generating personalized travel recommendations.
+Purpose:
+    Score mock activity catalogs, diversify ranked lists, cache responses,
+    and blend trend signals for destination cards (Feature 15 / PBI 24–30).
+
+Responsibilities:
+    Activity generation, similarity search, feedback hooks, destination catalog
+    ranking, and GPS/weather-aware contextual pools.
+
+Dependencies:
+    ``settings``, enums and base schemas, ``recommendations.schemas``,
+    ``model_manager``, optional ``TrendsService``.
 """
 
 from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
@@ -50,23 +58,36 @@ _DESTINATION_CATALOG: List[Dict[str, Any]] = [
 
 
 class RecommendationService:
-    """Service for generating personalized travel recommendations."""
-    
+    """Facade over mock data sources with scoring, diversity, and caching.
+
+    Attributes:
+        model_manager: Registry for optional recommendation models.
+        trends_service: Optional trends feed for emerging destinations.
+        cache: In-memory map of hashed recommendation responses.
+    """
+
     def __init__(self, model_manager, trends_service: Optional["TrendsService"] = None):
-        """Initialize with ML model manager and optional trends service (Feature 15)."""
+        """Attaches models and an optional trends collaborator (Feature 15).
+
+        Args:
+            model_manager: Shared ``ModelManager``.
+            trends_service: Used when ``include_emerging_trends`` is requested.
+        """
         self.model_manager = model_manager
         self.trends_service = trends_service
         self.cache = {}  # Simple in-memory cache (replace with Redis in production)
     
     async def generate_recommendations(self, request: RecommendationRequest) -> RecommendationResponse:
-        """
-        Generate personalized recommendations based on user profile and context.
-        
+        """Scores candidates, diversifies, explains, caches, and returns confidences.
+
         Args:
-            request: Recommendation request with user context and preferences
-            
+            request: User id, location, filters, preferences, and ``max_results``.
+
         Returns:
-            RecommendationResponse with personalized activities and confidence scores
+            ``RecommendationResponse`` with ranked ``Activity`` rows and explanations.
+
+        Raises:
+            Exception: Logged and re-raised on pipeline failures.
         """
         try:
             logger.info(f"Generating recommendations for user {request.user_id}")
@@ -121,15 +142,17 @@ class RecommendationService:
             raise
     
     async def get_popular_activities(self, location: str, limit: int) -> List[Activity]:
-        """
-        Get popular activities for a specific location.
-        
+        """Returns mock activities for ``location`` sorted by rating (with jitter).
+
         Args:
-            location: Location name
-            limit: Maximum number of activities to return
-            
+            location: City/region label for mock generation.
+            limit: Cap on returned items.
+
         Returns:
-            List of popular activities
+            Top ``limit`` activities by rating.
+
+        Raises:
+            Exception: Logged and re-raised if mock generation fails.
         """
         try:
             # Mock implementation - in production, query database
@@ -149,15 +172,17 @@ class RecommendationService:
             raise
     
     async def get_trending_activities(self, category: Optional[str], limit: int) -> List[Activity]:
-        """
-        Get trending activities globally or by category.
-        
+        """Simulates trending via boosted mock scores and optional category filter.
+
         Args:
-            category: Optional activity category filter
-            limit: Maximum number of activities to return
-            
+            category: When set, filters by ``ActivityType`` string match.
+            limit: Number of trending rows to return.
+
         Returns:
-            List of trending activities
+            Trending-scored activities capped at ``limit``.
+
+        Raises:
+            Exception: Logged and re-raised on generation errors.
         """
         try:
             # Mock implementation - in production, analyze recent interactions
@@ -188,15 +213,17 @@ class RecommendationService:
             raise
     
     async def get_similar_activities(self, activity_id: str, limit: int) -> List[Activity]:
-        """
-        Get activities similar to a specific activity.
-        
+        """Ranks a mock pool by heuristic similarity to a reference activity.
+
         Args:
-            activity_id: Reference activity ID
-            limit: Maximum number of similar activities
-            
+            activity_id: Seed id resolved via ``_get_activity_by_id``.
+            limit: Max neighbors to return.
+
         Returns:
-            List of similar activities
+            Closest activities by similarity, or empty if the seed is unknown.
+
+        Raises:
+            Exception: Logged and re-raised if similarity scoring fails.
         """
         try:
             # Get reference activity (mock implementation)
@@ -232,14 +259,16 @@ class RecommendationService:
             raise
     
     async def record_feedback(self, user_id: str, activity_id: str, rating: int, feedback_text: Optional[str]):
-        """
-        Record user feedback for recommendations.
-        
+        """Logs structured feedback and calls the preference-update stub.
+
         Args:
-            user_id: User identifier
-            activity_id: Activity identifier
-            rating: Rating from 1-5
-            feedback_text: Optional detailed feedback
+            user_id: Rater.
+            activity_id: Target activity.
+            rating: Ordinal score (1–5).
+            feedback_text: Optional comment stored only in logs for now.
+
+        Raises:
+            Exception: Propagates after logging on failure.
         """
         try:
             # In production, store in database and use for model retraining
@@ -261,19 +290,24 @@ class RecommendationService:
             raise
     
     async def get_activity_categories(self) -> List[str]:
-        """
-        Get all available activity categories.
-        
-        Returns:
-            List of activity category names
-        """
+        """Lists every ``ActivityType`` enum value as a string."""
         return [category.value for category in ActivityType]
 
     async def get_personalized_destinations(
         self, request: DestinationRecommendationRequest
     ) -> DestinationRecommendationResponse:
-        """
-        PBI 24: destinos con compatibilidad > umbral y diversidad con sesgo a patrones exitosos.
+        """PBI 24: ranks catalog destinations with compatibility, diversity, and trend inserts.
+
+        Scores each catalog row using preference overlap, optional success-pattern boosts,
+        theme weights, and light jitter; enforces a minimum compatibility floor, applies
+        diversity heuristics (e.g. beach-heavy history), and optionally prepends emerging
+        destinations from ``trends_service``.
+
+        Args:
+            request: User id, theme weights, success-pattern preference, caps, and trend flag.
+
+        Returns:
+            ``DestinationRecommendationResponse`` with cards and an optional diversity note.
         """
         profile = await self._get_user_profile(request.user_id)
         pref_values = {p.value for p in profile.get("preferences", [])}
@@ -401,8 +435,16 @@ class RecommendationService:
     async def get_contextual_activities(
         self, request: ContextualActivityRequest
     ) -> ContextualActivityResponse:
-        """
-        PBI 25: actividades según ubicación, clima y preferencias; alternativas indoor si el clima es adverso.
+        """PBI 25: ranks a GPS-local pool by distance, prefs, and weather suitability.
+
+        Adverse weather deprioritizes outdoor rows and reorders indoor-first while keeping
+        a blended score of proximity, tag overlap, and indoor fitness.
+
+        Args:
+            request: User id, coordinates, radius, weather enum, and result cap.
+
+        Returns:
+            ``ContextualActivityResponse`` with ranked activities and a context note.
         """
         profile = await self._get_user_profile(request.user_id)
         city = request.city_hint or "current_area"
@@ -459,6 +501,7 @@ class RecommendationService:
     # Private helper methods
 
     def _haversine_km(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Great-circle distance in kilometers between two WGS84 points."""
         r = 6371.0
         p1, p2 = math.radians(lat1), math.radians(lat2)
         dphi = math.radians(lat2 - lat1)
@@ -513,7 +556,7 @@ class RecommendationService:
         return activities
 
     async def _get_user_profile(self, user_id: str) -> Dict[str, Any]:
-        """Get user profile for personalization."""
+        """Mock profile dict with preferences, travel history tags, and budget."""
         # Mock implementation - in production, query database / core backend
         return {
             "user_id": user_id,
@@ -540,12 +583,12 @@ class RecommendationService:
         }
     
     async def _get_candidate_activities(self, request: RecommendationRequest) -> List[Activity]:
-        """Get candidate activities based on location and filters."""
+        """Builds an oversized mock pool from the request city for downstream scoring."""
         # Mock implementation - in production, query database with location filters
         return await self._generate_mock_activities(request.location.city or "Unknown", request.max_results * 3)
     
     async def _score_activities(self, activities: List[Activity], user_profile: Dict[str, Any], request: RecommendationRequest) -> List[Dict[str, Any]]:
-        """Score activities based on user preferences and context."""
+        """Heuristic blend of rating, tag/pref overlap, budget hints, and group size."""
         scored_activities = []
         user_preferences = request.preferences or user_profile.get("preferences", [])
 
@@ -580,7 +623,7 @@ class RecommendationService:
         return scored_activities
     
     async def _apply_ranking_and_diversity(self, scored_activities: List[Dict[str, Any]], max_results: int) -> List[Activity]:
-        """Apply ranking and diversity algorithms to final recommendations."""
+        """Sorts by confidence then caps per-category representation for variety."""
         # Sort by confidence score
         scored_activities.sort(key=lambda x: x['confidence_score'], reverse=True)
         
@@ -604,7 +647,7 @@ class RecommendationService:
         return diverse_recommendations
     
     async def _generate_explanation(self, recommendations: List[Activity], user_profile: Dict[str, Any]) -> str:
-        """Generate explanation for recommendations."""
+        """Template string summarizing top user prefs and recommended categories."""
         if not recommendations:
             return "No recommendations available at the moment."
         
@@ -618,7 +661,7 @@ class RecommendationService:
         return explanation
     
     async def _generate_mock_activities(self, location: str, count: int) -> List[Activity]:
-        """Generate mock activities for testing."""
+        """Synthetic activities with random geo, tags, indoor flags, and ratings."""
         activities = []
         categories = list(ActivityType)
         preferences = list(TravelPreference)
@@ -659,7 +702,7 @@ class RecommendationService:
         return activities
     
     async def _get_activity_by_id(self, activity_id: str) -> Optional[Activity]:
-        """Get activity by ID (mock implementation)."""
+        """Linear scan over a generated mock batch to resolve an id."""
         # Mock implementation - in production, query database
         activities = await self._generate_mock_activities("test", 100)
         for activity in activities:
@@ -668,7 +711,7 @@ class RecommendationService:
         return None
     
     async def _calculate_similarity(self, activity1: Activity, activity2: Activity) -> float:
-        """Calculate similarity between two activities."""
+        """Weighted mix of category match, Jaccard tags, price band, and rating proximity."""
         similarity = 0.0
         
         # Category similarity
@@ -694,6 +737,6 @@ class RecommendationService:
         return min(similarity, 1.0)
     
     async def _update_user_preferences_from_feedback(self, user_id: str, activity_id: str, rating: int):
-        """Update user preferences based on feedback."""
+        """Placeholder hook for future preference learning from ratings."""
         # In production, implement preference learning algorithm
         logger.info(f"Updating preferences for user {user_id} based on feedback for {activity_id}")

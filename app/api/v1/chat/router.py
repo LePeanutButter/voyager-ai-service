@@ -1,5 +1,10 @@
-"""
-Chat API router — AI Travel Chatbot.
+"""HTTP router for the travel-planning chat.
+
+Responsibilities:
+    POST on the base path for messages; GET/DELETE history by `user_id`.
+
+Dependencies:
+    `ChatServiceDep`, schemas `ChatRequest`, `ChatResponse`, etc.
 """
 
 import logging
@@ -31,6 +36,18 @@ async def chat(
     request_data: ChatRequest,
     service: ChatServiceDep,
 ) -> ChatResponse:
+    """Handles one conversation turn (context extraction, suggestions, reply).
+
+    Args:
+        request_data: `userId` and `message` validated by Pydantic.
+        service: `ChatService` orchestrator.
+
+    Returns:
+        Assistant text, suggestions, and metadata.
+
+    Raises:
+        HTTPException: 400 on business validation; 500 on unexpected error.
+    """
     try:
         logger.info(
             "Chat request — user=%s, message_len=%d",
@@ -58,6 +75,18 @@ async def chat(
     },
 )
 async def get_history(user_id: str, service: ChatServiceDep) -> ConversationHistoryResponse:
+    """Returns messages and merged context for the user.
+
+    Args:
+        user_id: Chat session identifier.
+        service: `ChatService`.
+
+    Returns:
+        History and merged travel context.
+
+    Raises:
+        HTTPException: 400 if `user_id` is blank; 404 if no messages; 500 on internal failure.
+    """
     if not user_id or not user_id.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user_id must not be blank")
     try:
@@ -87,6 +116,18 @@ async def get_history(user_id: str, service: ChatServiceDep) -> ConversationHist
     },
 )
 async def clear_history(user_id: str, service: ChatServiceDep) -> ClearHistoryResponse:
+    """Clears in-memory conversation history for the user.
+
+    Args:
+        user_id: Session identifier.
+        service: `ChatService`.
+
+    Returns:
+        Confirmation with normalized `userId`.
+
+    Raises:
+        HTTPException: 400, 404, or 500 depending on validation and session existence.
+    """
     if not user_id or not user_id.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user_id must not be blank")
     try:

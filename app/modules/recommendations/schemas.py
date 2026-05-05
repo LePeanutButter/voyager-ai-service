@@ -1,3 +1,12 @@
+"""Schemas for personalized activities, destinations, and contextual listings.
+
+Purpose:
+    Define contracts for recommendation endpoints including geo-contextual queries.
+
+Dependencies:
+    ``Location``, ``ActivityType``, ``TravelPreference``, ``WeatherCondition``.
+"""
+
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -8,6 +17,8 @@ from app.modules.common.schemas.enums import ActivityType, TravelPreference, Wea
 
 
 class RecommendationRequest(BaseModel):
+    """Standard recommendation query for a user near a location."""
+
     user_id: str
     location: Location
     preferences: Optional[List[TravelPreference]] = None
@@ -18,6 +29,8 @@ class RecommendationRequest(BaseModel):
 
 
 class Activity(BaseModel):
+    """Rich activity card returned in recommendation lists."""
+
     activity_id: str
     name: str
     category: ActivityType
@@ -35,6 +48,8 @@ class Activity(BaseModel):
 
 
 class RecommendationResponse(BaseModel):
+    """Batch of activities with optional confidence and explanation."""
+
     recommendations: List[Activity]
     user_id: str
     generated_at: datetime
@@ -44,6 +59,8 @@ class RecommendationResponse(BaseModel):
 
 
 class DestinationCard(BaseModel):
+    """Destination suggestion with compatibility score and rationale text."""
+
     destination_id: str
     name: str
     country: str
@@ -53,6 +70,8 @@ class DestinationCard(BaseModel):
 
 
 class DestinationRecommendationRequest(BaseModel):
+    """Request for personalized destination cards."""
+
     user_id: str
     max_results: int = 8
     prefer_successful_patterns: bool = True
@@ -61,6 +80,8 @@ class DestinationRecommendationRequest(BaseModel):
 
 
 class DestinationRecommendationResponse(BaseModel):
+    """Ranked destinations with optional diversity note."""
+
     user_id: str
     destinations: List[DestinationCard]
     generated_at: datetime
@@ -68,6 +89,8 @@ class DestinationRecommendationResponse(BaseModel):
 
 
 class ContextualActivityRequest(BaseModel):
+    """Nearby activity query with optional weather for indoor/outdoor logic."""
+
     user_id: str
     latitude: float
     longitude: float
@@ -78,6 +101,8 @@ class ContextualActivityRequest(BaseModel):
 
 
 class ContextualActivityResponse(BaseModel):
+    """Activities adjusted to current place and weather context."""
+
     user_id: str
     location_summary: str
     weather: WeatherCondition

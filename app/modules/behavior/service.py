@@ -1,8 +1,14 @@
-"""
-Behavior Analysis Service for implicit user preference learning.
+"""Behavior analysis service for implicit preference learning.
 
-Analyzes user interaction patterns to automatically update user preferences
-and improve recommendation accuracy without explicit user input.
+Purpose:
+    Store interaction events, detect patterns (rejections, affinities, time/budget),
+    and emit weighted preference updates without explicit user surveys.
+
+Responsibilities:
+    Track interactions in memory, run analysis windows, and expose behavior summaries.
+
+Dependencies:
+    ``settings``, common enums, ``behavior.schemas``, optional ``model_manager``.
 """
 
 from typing import List, Dict, Any, Optional, Tuple
@@ -25,10 +31,20 @@ logger = logging.getLogger(__name__)
 
 
 class BehaviorAnalysisService:
-    """Service for analyzing user behavior and updating preferences implicitly."""
-    
+    """Analyzes stored interactions and produces implicit preference updates.
+
+    Attributes:
+        model_manager: Optional ML layer (reserved for future scoring).
+        behavior_data: In-memory per-user interaction store.
+        preference_weights: Interaction-type weights for scoring categories.
+    """
+
     def __init__(self, model_manager=None):
-        """Initialize with optional ML model manager."""
+        """Creates the service and default weight tables.
+
+        Args:
+            model_manager: Optional ``ModelManager`` for future ML integration.
+        """
         self.model_manager = model_manager
         self.behavior_data = {}  # In-memory storage (replace with database in production)
         self.preference_weights = {
@@ -49,14 +65,13 @@ class BehaviorAnalysisService:
         self.MIN_INTERACTIONS_FOR_ANALYSIS = 5
     
     async def track_interaction(self, request: BehaviorTrackingRequest) -> bool:
-        """
-        Track a user interaction for behavior analysis.
-        
+        """Appends a normalized interaction and trims history to 30 days.
+
         Args:
-            request: Behavior tracking request
-            
+            request: Tracking payload with user, type, and optional category/context.
+
         Returns:
-            True if tracking successful
+            ``True`` on success, ``False`` on unexpected error.
         """
         try:
             user_id = request.user_id
@@ -96,14 +111,16 @@ class BehaviorAnalysisService:
             return False
     
     async def analyze_behavior(self, request: BehaviorAnalysisRequest) -> ImplicitPreferenceUpdate:
-        """
-        Analyze user behavior patterns and generate preference updates.
-        
+        """Runs pattern detection and preference scoring over the analysis window.
+
         Args:
-            request: Behavior analysis request
-            
+            request: User id, window length, and flags for patterns vs preference deltas.
+
         Returns:
-            Implicit preference update with detected patterns
+            ``ImplicitPreferenceUpdate`` (possibly empty if too few interactions).
+
+        Raises:
+            ValueError: If no behavior data exists for the user.
         """
         try:
             user_id = request.user_id
@@ -160,7 +177,14 @@ class BehaviorAnalysisService:
             raise
     
     async def _detect_behavior_patterns(self, interactions: List[Dict]) -> List[BehaviorPattern]:
-        """Detect behavior patterns from user interactions."""
+        """Runs rejection, preference, time, and budget pattern detectors.
+
+        Args:
+            interactions: Filtered interaction dicts for the window.
+
+        Returns:
+            Combined list of ``BehaviorPattern`` instances.
+        """
         patterns = []
         
         # Pattern 1: Consistent rejection of certain categories
@@ -182,7 +206,7 @@ class BehaviorAnalysisService:
         return patterns
     
     def _detect_rejection_patterns(self, interactions: List[Dict]) -> List[BehaviorPattern]:
-        """Detect patterns of consistent rejection."""
+        """Flags categories with repeated ``REJECT`` events above threshold."""
         patterns = []
         
         # Count rejections by category
@@ -208,7 +232,7 @@ class BehaviorAnalysisService:
         return patterns
     
     def _detect_preference_patterns(self, interactions: List[Dict]) -> List[BehaviorPattern]:
-        """Detect strong preference patterns."""
+        """Detects categories with high positive interaction weight density."""
         patterns = []
         
         # Count positive interactions by category
@@ -243,7 +267,7 @@ class BehaviorAnalysisService:
         return patterns
     
     def _detect_time_based_patterns(self, interactions: List[Dict]) -> List[BehaviorPattern]:
-        """Detect time-based interaction patterns."""
+        """Detects dominant hour-of-day clusters in interaction timestamps."""
         patterns = []
         
         # Analyze interaction times
@@ -274,7 +298,7 @@ class BehaviorAnalysisService:
         return patterns
     
     def _detect_budget_patterns(self, interactions: List[Dict]) -> List[BehaviorPattern]:
-        """Detect budget-related patterns."""
+        """Detects recurring ``price_range`` hints in interaction context."""
         patterns = []
         
         # Analyze price range preferences from context
@@ -306,7 +330,7 @@ class BehaviorAnalysisService:
         return patterns
     
     async def _calculate_preference_updates(self, interactions: List[Dict], patterns: List[BehaviorPattern]) -> Dict[str, float]:
-        """Calculate preference updates based on interactions and patterns."""
+        """Aggregates weighted category scores and applies pattern-based adjustments."""
         preference_updates = {}
         
         # Calculate category-based preference updates
@@ -336,7 +360,7 @@ class BehaviorAnalysisService:
         return preference_updates
     
     def _calculate_confidence_score(self, interactions: List[Dict], patterns: List[BehaviorPattern]) -> float:
-        """Calculate overall confidence in the analysis."""
+        """Blends volume-based and pattern-mean confidence into [0, 1]."""
         # Base confidence on interaction count
         interaction_confidence = min(len(interactions) / 20.0, 1.0)  # Max confidence at 20 interactions
         
@@ -350,7 +374,7 @@ class BehaviorAnalysisService:
         return min(overall_confidence, 1.0)
     
     def _create_empty_update(self, user_id: str, analysis_days: int) -> ImplicitPreferenceUpdate:
-        """Create empty preference update when insufficient data."""
+        """Builds a zeroed update when interaction count is below the analysis minimum."""
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=analysis_days)
         analysis_period = DateRange(
             start=cutoff_date,
@@ -366,7 +390,15 @@ class BehaviorAnalysisService:
         )
     
     async def get_user_behavior_summary(self, user_id: str, days: int = 30) -> Dict[str, Any]:
-        """Get a summary of user's behavior patterns."""
+        """Returns interaction breakdowns and recent patterns for dashboards.
+
+        Args:
+            user_id: Target user.
+            days: Lookback window in days.
+
+        Returns:
+            Stats dict, or ``{"error": ...}`` if no data exists.
+        """
         if user_id not in self.behavior_data:
             return {"error": "No behavior data found"}
         

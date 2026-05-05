@@ -1,8 +1,11 @@
-"""
-Tourism Assistant AI Microservice
+"""Root package for the AI tourism assistant microservice.
 
-A production-ready Python microservice for AI-powered travel recommendations,
-user profiling, and traveler matching.
+Responsibilities:
+    Publish package metadata (`__version__`, etc.) and serve as the `app` namespace
+    entry point for the FastAPI app and domain modules.
+
+Dependencies:
+    None at module level; real startup happens in `app.main`.
 """
 
 __version__ = "1.0.0"

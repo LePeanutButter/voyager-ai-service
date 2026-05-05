@@ -1,9 +1,20 @@
-"""
-Feature 16 — UI adaptativa según comportamiento (PBI 32–33).
+"""Behavior-driven adaptive UI service (Feature 16, PBI 32–33).
 
-Usa el mismo almacenamiento in-memory que BehaviorAnalysisService. El cliente debe
-enviar en `context` de POST /behavior-analysis/track el campo `nav_item_id` para
-adaptación de menú (y categorías en interacciones para el feed).
+Purpose:
+    Reorder the menu and compose home sections from interactions stored in the
+    same in-memory store as ``BehaviorAnalysisService``.
+
+Responsibilities:
+    Weight ``nav_item_id`` in tracking context, derive feed themes from activity
+    categories, and apply configurable cultural boosting.
+
+Dependencies:
+    ``BehaviorAnalysisService``, ``settings``, ``NavItemTier`` and
+    ``TravelPreference`` enums, response schemas in ``schemas``.
+
+Note:
+    Clients should send ``context.nav_item_id`` on behavior tracking POST for menu
+    adaptation; categories feed the home layout.
 """
 
 from __future__ import annotations
@@ -25,7 +36,7 @@ from app.modules.behavior.service import BehaviorAnalysisService
 
 logger = logging.getLogger(__name__)
 
-# Catálogo fijo de entradas de navegación (el front resuelve rutas).
+# Fixed navigation catalog (frontend resolves routes).
 _NAV_CATALOG: List[Dict[str, Any]] = [
     {"id": "home", "label": "Inicio", "default_order": 0},
     {"id": "discover", "label": "Descubrir", "default_order": 1},
@@ -37,7 +48,7 @@ _NAV_CATALOG: List[Dict[str, Any]] = [
     {"id": "preferences", "label": "Preferencias", "default_order": 7},
 ]
 
-# Mapeo categoría de actividad / interacción → tema de feed y TravelPreference
+# Activity / interaction category → feed theme and TravelPreference mapping
 _CATEGORY_TO_THEME: Dict[str, str] = {
     "cultural": "cultural",
     "adventure": "adventure",
@@ -57,6 +68,14 @@ _CATEGORY_TO_THEME: Dict[str, str] = {
 
 
 def _normalize_weights(raw: Dict[str, float]) -> Dict[str, float]:
+    """Scales positive weights to [0, 1] by dividing by the maximum.
+
+    Args:
+        raw: Counters or weights per theme.
+
+    Returns:
+        Empty dict if no input; otherwise values rounded to four decimals.
+    """
     if not raw:
         return {}
     m = max(raw.values()) or 1.0
@@ -64,7 +83,11 @@ def _normalize_weights(raw: Dict[str, float]) -> Dict[str, float]:
 
 
 class AdaptiveUIService:
-    """Reordena menú y compone secciones del home según interacciones recientes."""
+    """Computes personalized menu and feed from the user's recent interactions.
+
+    Important attributes:
+        _behavior: Reference to the shared behavior analysis service.
+    """
 
     def __init__(self, behavior_service: BehaviorAnalysisService) -> None:
         self._behavior = behavior_service
@@ -72,6 +95,15 @@ class AdaptiveUIService:
     def _interactions_in_window(
         self, user_id: str, days: int
     ) -> List[Dict[str, Any]]:
+        """Filters user interactions after the UTC time cutoff.
+
+        Args:
+            user_id: User identifier.
+            days: Lookback window in days.
+
+        Returns:
+            List of interaction dicts or empty list if none.
+        """
         if user_id not in self._behavior.behavior_data:
             return []
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
@@ -79,6 +111,14 @@ class AdaptiveUIService:
         return [i for i in interactions if i["timestamp"] > cutoff]
 
     def build_menu_adaptation(self, user_id: str) -> MenuAdaptationResponse:
+        """Builds primary and secondary menu items from ``nav_item_id`` frequency.
+
+        Args:
+            user_id: Target user.
+
+        Returns:
+            Response with order, tiers, scores, and summary text for the client.
+        """
         window = settings.ADAPTIVE_UI_ANALYSIS_WINDOW_DAYS
         interactions = self._interactions_in_window(user_id, window)
 
@@ -99,7 +139,7 @@ class AdaptiveUIService:
 
         max_count = max(nav_counts.values(), default=0)
 
-        # Orden: primero por uso descendente; empate por default_order del catálogo
+        # Sort: usage descending first; ties by catalog default_order
         def catalog_order(nav_id: str) -> int:
             for e in _NAV_CATALOG:
                 if e["id"] == nav_id:
@@ -114,7 +154,7 @@ class AdaptiveUIService:
         primary_cap = settings.ADAPTIVE_UI_PRIMARY_NAV_SLOTS
         primary: List[MenuNavItem] = []
         secondary: List[MenuNavItem] = []
-        # Sin señales de navegación: barra por defecto (primeros slots del catálogo)
+        # No navigation signals: default bar (first catalog slots)
         no_nav_signal = max_count == 0
 
         for nav_id in scored_ids:
@@ -131,7 +171,7 @@ class AdaptiveUIService:
                 else:
                     tier = NavItemTier.SECONDARY
                     reason = "Resto de entradas en menú secundario o “más”."
-            # Sin uso en la ventana → secundario / agrupado (PBI 32)
+            # No use in window → secondary / grouped (PBI 32)
             elif count == 0:
                 tier = NavItemTier.SECONDARY
                 reason = (
@@ -164,7 +204,7 @@ class AdaptiveUIService:
             else:
                 secondary.append(entry)
 
-        # Re-asignar sort_index secuencial
+        # Reassign sequential sort_index
         for i, p in enumerate(primary):
             p.sort_index = i
         for i, s in enumerate(secondary):
@@ -192,6 +232,14 @@ class AdaptiveUIService:
     def _theme_signals_from_interactions(
         self, interactions: List[Dict[str, Any]]
     ) -> Dict[str, float]:
+        """Aggregates weights per theme from activity categories and interest context.
+
+        Args:
+            interactions: Events already filtered by time window.
+
+        Returns:
+            Theme → accumulated weight map (not normalized).
+        """
         weights: Dict[str, float] = defaultdict(float)
         for item in interactions:
             cat = item.get("activity_category")
@@ -218,6 +266,14 @@ class AdaptiveUIService:
         return dict(weights)
 
     def build_home_feed_layout(self, user_id: str) -> HomeFeedLayoutResponse:
+        """Composes home sections and weights for thematic recommendations.
+
+        Args:
+            user_id: Target user.
+
+        Returns:
+            Layout with per-theme sections or default balanced layout without signals.
+        """
         window = settings.ADAPTIVE_UI_ANALYSIS_WINDOW_DAYS
         interactions = self._interactions_in_window(user_id, window)
         themes = self._theme_signals_from_interactions(interactions)
@@ -275,7 +331,7 @@ class AdaptiveUIService:
                 )
             )
 
-        # Refuerzo cultural tras interacciones culturales (PBI 33)
+        # Cultural boost after cultural interactions (PBI 33)
         boost_note = ""
         if normalized.get("cultural", 0) >= 0.35:
             normalized["cultural"] = min(

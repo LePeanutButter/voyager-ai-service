@@ -1,5 +1,12 @@
-"""
-FastAPI application for AI-powered Tourism Assistant Microservice.
+"""FastAPI app for the AI tourism assistant microservice.
+
+Responsibilities:
+    - Start/shutdown `lifespan`: load ML models, trends, and services into `app.state`.
+    - Register CORS middleware and mount `api_v1_router` under `/api/v1`.
+    - Expose root `/` and `/health` for lightweight checks.
+
+Dependencies:
+    `app.api.v1.router`, `app.core.config.settings`, domain services, and `ModelManager` in `app.ml`.
 """
 
 from contextlib import asynccontextmanager
@@ -28,6 +35,16 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Initializes and publishes microservice singletons on `app.state`.
+
+    Loads models, domain services, chat, and questionnaire; on shutdown only logs.
+
+    Args:
+        app: FastAPI instance whose `state` is mutated.
+
+    Yields:
+        Control to the FastAPI runtime between startup and shutdown.
+    """
     logger.info("Starting Tourism Assistant microservice...")
 
     model_manager = ModelManager()
@@ -86,6 +103,11 @@ app.include_router(api_v1_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
+    """Returns a minimal payload confirming the API is running.
+
+    Returns:
+        dict: Message, version, and status text.
+    """
     return {
         "message": "Tourism Assistant API is running",
         "version": "1.0.0",
@@ -95,6 +117,14 @@ async def root():
 
 @app.get("/health")
 async def health_check():
+    """Checks process availability and whether ML models report ready.
+
+    Returns:
+        dict: `status`, `models_loaded`, and service name.
+
+    Raises:
+        HTTPException: 503 if the check fails unexpectedly.
+    """
     try:
         model_manager = getattr(app.state, "model_manager", None)
         models_loaded = (

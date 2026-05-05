@@ -1,3 +1,12 @@
+"""Schemas for traveler matching, compatibility scores, and learning outcomes.
+
+Purpose:
+    Support matching API requests/responses and connection-outcome callbacks.
+
+Dependencies:
+    ``Location``, ``ConnectionOutcome``, ``TravelPreference``.
+"""
+
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -8,6 +17,8 @@ from app.modules.common.schemas.enums import ConnectionOutcome, TravelPreference
 
 
 class TravelerMatchRequest(BaseModel):
+    """Criteria to search for compatible travel partners."""
+
     user_id: str
     location: Location
     travel_dates: Optional[Dict[str, str]] = None
@@ -16,6 +27,8 @@ class TravelerMatchRequest(BaseModel):
 
 
 class TravelerMatch(BaseModel):
+    """One ranked candidate with compatibility breakdown."""
+
     user_id: str
     name: str
     age: Optional[int] = None
@@ -28,6 +41,8 @@ class TravelerMatch(BaseModel):
 
 
 class MatchingResponse(BaseModel):
+    """Collection of matches returned to the client."""
+
     matches: List[TravelerMatch]
     user_id: str
     generated_at: datetime
@@ -36,6 +51,8 @@ class MatchingResponse(BaseModel):
 
 
 class ConnectionOutcomeRequest(BaseModel):
+    """Report how a connection attempt resolved for weight learning."""
+
     user_id: str
     target_user_id: str
     outcome: ConnectionOutcome
@@ -44,5 +61,7 @@ class ConnectionOutcomeRequest(BaseModel):
 
 
 class ConnectionOutcomeResponse(BaseModel):
+    """Acknowledgement after recording a connection outcome."""
+
     status: str
     updated_weights: Dict[str, float]

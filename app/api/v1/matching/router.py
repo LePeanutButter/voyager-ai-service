@@ -1,5 +1,11 @@
-"""
-Traveler matching API routes.
+"""HTTP router for traveler matching and weight learning.
+
+Responsibilities:
+    Partner search, compatibility, connections, feedback, and outcomes
+    to adjust the matching model.
+
+Dependencies:
+    `MatchingServiceDep`, schemas in `app.modules.matching.schemas`.
 """
 
 import logging
@@ -24,6 +30,18 @@ async def find_travel_partners(
     request_data: TravelerMatchRequest,
     service: MatchingServiceDep,
 ):
+    """Finds compatible candidates from request criteria.
+
+    Args:
+        request_data: Source user and matching filters.
+        service: `MatchingService`.
+
+    Returns:
+        Ranked match list.
+
+    Raises:
+        HTTPException: 500 on matching engine error.
+    """
     try:
         logger.info("Finding travel partners for user %s", request_data.user_id)
         matches = await service.find_travel_partners(request_data)
@@ -40,6 +58,19 @@ async def get_compatibility_score(
     target_user_id: str,
     service: MatchingServiceDep,
 ):
+    """Computes compatibility score or breakdown between two users.
+
+    Args:
+        user_id: First user.
+        target_user_id: Second user.
+        service: `MatchingService`.
+
+    Returns:
+        Compatibility object from the service.
+
+    Raises:
+        HTTPException: 404 if a profile is missing; 500 on internal error.
+    """
     try:
         logger.info("Calculating compatibility between %s and %s", user_id, target_user_id)
         compatibility = await service.calculate_compatibility(user_id, target_user_id)
@@ -60,6 +91,20 @@ async def initiate_connection(
     target_user_id: str,
     message: Optional[str] = None,
 ):
+    """Starts a connection request between two travelers.
+
+    Args:
+        service: `MatchingService`.
+        user_id: Initiating user.
+        target_user_id: Target user.
+        message: Optional request text.
+
+    Returns:
+        Confirmation with `connection_id` when the service provides it.
+
+    Raises:
+        HTTPException: 500 on internal error.
+    """
     try:
         logger.info("Initiating connection from %s to %s", user_id, target_user_id)
         connection = await service.initiate_connection(user_id, target_user_id, message)
@@ -80,6 +125,19 @@ async def get_user_connections(
     service: MatchingServiceDep,
     status: Optional[str] = None,
 ):
+    """Lists the user's connections, optionally filtered by status.
+
+    Args:
+        user_id: Queried user.
+        service: `MatchingService`.
+        status: Optional textual status filter.
+
+    Returns:
+        Dict with `connections` and `total_count`.
+
+    Raises:
+        HTTPException: 500 on internal error.
+    """
     try:
         logger.info("Fetching connections for user %s", user_id)
         connections = await service.get_user_connections(user_id, status)
@@ -96,6 +154,20 @@ async def respond_to_connection(
     service: MatchingServiceDep,
     message: Optional[str] = None,
 ):
+    """Accepts or declines an existing connection request.
+
+    Args:
+        connection_id: Request identifier.
+        response: Literal `accept` or `decline`.
+        service: `MatchingService`.
+        message: Optional reply to the other user.
+
+    Returns:
+        Confirmation with updated status.
+
+    Raises:
+        HTTPException: 400 if `response` is invalid; 404 if not found; 500 on failure.
+    """
     try:
         if response not in ["accept", "decline"]:
             raise HTTPException(status_code=400, detail="Response must be 'accept' or 'decline'")
@@ -122,6 +194,20 @@ async def get_travel_buddy_recommendations(
     location: Optional[str] = None,
     limit: int = 10,
 ):
+    """Suggests travel buddies by location and limits.
+
+    Args:
+        user_id: User to recommend for.
+        service: `MatchingService`.
+        location: Optional geographic filter.
+        limit: Max suggestions.
+
+    Returns:
+        Dict with recommendation list and count.
+
+    Raises:
+        HTTPException: 500 on internal error.
+    """
     try:
         logger.info("Getting travel buddy recommendations for user %s", user_id)
         recommendations = await service.get_travel_buddy_recommendations(user_id, location, limit)
@@ -140,6 +226,18 @@ async def submit_connection_outcome(
     body: ConnectionOutcomeRequest,
     service: MatchingServiceDep,
 ):
+    """Records a connection outcome to update learning weights.
+
+    Args:
+        body: Users, outcome, and optional dimensional snapshot.
+        service: `MatchingService`.
+
+    Returns:
+        Status and updated weights when applicable.
+
+    Raises:
+        HTTPException: 500 on persist or compute error.
+    """
     try:
         weights = await service.process_connection_outcome(
             body.user_id,
@@ -162,6 +260,21 @@ async def submit_match_feedback(
     rating: int,
     feedback_text: Optional[str] = None,
 ):
+    """Records explicit rating for the match or interaction.
+
+    Args:
+        user_id: Rater.
+        target_user_id: Counterparty.
+        service: `MatchingService`.
+        rating: Integer 1–5.
+        feedback_text: Optional free-text comment.
+
+    Returns:
+        Confirmation with ids and rating.
+
+    Raises:
+        HTTPException: 400 if rating is out of range; 500 on internal error.
+    """
     try:
         if rating < 1 or rating > 5:
             raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")

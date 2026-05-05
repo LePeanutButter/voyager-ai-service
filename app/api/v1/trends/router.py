@@ -1,4 +1,11 @@
-"""Predictive travel trends API (Feature 15)."""
+"""Predictive travel trends API (dashboard, segments, digest).
+
+Responsibilities:
+    Serve aggregated views from `TrendsService` after ensuring initialization.
+
+Dependencies:
+    `TrendsServiceDep`, schemas in `app.modules.trends.schemas`.
+"""
 
 import logging
 
@@ -17,6 +24,17 @@ router = APIRouter()
 
 @router.get("/dashboard", response_model=TrendsDashboardResponse)
 async def trends_dashboard(service: TrendsServiceDep):
+    """Returns the trends dashboard (emerging destinations, signals, etc.).
+
+    Args:
+        service: Injected trends service.
+
+    Returns:
+        Serializable `TrendsDashboardResponse`.
+
+    Raises:
+        HTTPException: 500 if the dashboard cannot be built.
+    """
     try:
         await service.ensure_initialized()
         return service.get_dashboard()
@@ -27,6 +45,18 @@ async def trends_dashboard(service: TrendsServiceDep):
 
 @router.get("/segments/{segment_id}/insights", response_model=SegmentInsightsResponse)
 async def segment_insights(segment_id: str, service: TrendsServiceDep):
+    """Returns the predictive snapshot for a traveler segment.
+
+    Args:
+        segment_id: Segment key (internal catalog or fallback).
+        service: Trends service.
+
+    Returns:
+        `SegmentInsightsResponse` with patterns and budget profile.
+
+    Raises:
+        HTTPException: 500 if generation fails.
+    """
     try:
         await service.ensure_initialized()
         return service.get_segment_insights(segment_id)
@@ -37,6 +67,17 @@ async def segment_insights(segment_id: str, service: TrendsServiceDep):
 
 @router.get("/weekly-digest", response_model=WeeklyTrendsDigestResponse)
 async def weekly_trends_digest(service: TrendsServiceDep):
+    """Returns the weekly digest of micro-trends and partner notices.
+
+    Args:
+        service: Trends service.
+
+    Returns:
+        `WeeklyTrendsDigestResponse`.
+
+    Raises:
+        HTTPException: 500 if the digest cannot be built.
+    """
     try:
         await service.ensure_initialized()
         return service.get_weekly_digest()

@@ -1,8 +1,14 @@
-"""
-**Deprecated** — use ``app.modules.<domain>.schemas`` or ``app.modules.common.schemas``.
+"""Deprecated schema barrel for import compatibility.
 
-Re-exports preserve compatibility for external imports of ``app.models.schemas``
-until callers migrate.
+Purpose:
+    Re-export types from `app.modules.*.schemas` and `app.modules.common.schemas`
+    for code that still imports `app.models.schemas`.
+
+Responsibilities:
+    Keep `__all__` explicit; new features should import from the domain module.
+
+Dependencies:
+    Multiple submodules under `app.modules`.
 """
 
 from app.modules.adaptive_ui.schemas import (

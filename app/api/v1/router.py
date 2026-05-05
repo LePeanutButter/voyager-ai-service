@@ -1,4 +1,12 @@
-"""Aggregate API v1 routers (single mount point for ``main``)."""
+"""Aggregator for HTTP routers under the `/api/v1` prefix.
+
+Responsibilities:
+    Mount a single `APIRouter` with sub-routers per domain (recommendations,
+    users, matching, trends, chat, preferences, behavior, adaptive UI).
+
+Dependencies:
+    `APIRouter` definitions and `app.api.v1.*.router` submodules.
+"""
 
 from fastapi import APIRouter
 

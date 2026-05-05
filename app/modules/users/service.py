@@ -1,8 +1,14 @@
-"""
-User service for profile management and behavior analysis.
+"""User profile and interaction service (in-memory demo store).
 
-Handles user profile operations, preference learning, and
-interaction tracking for personalized recommendations.
+Purpose:
+    Create and update profiles, normalize preferences, record interactions,
+    and surface lightweight analytics for personalization layers.
+
+Responsibilities:
+    CRUD-style profile operations, capped interaction history, and insight payloads.
+
+Dependencies:
+    ``settings``, common enums, ``users.schemas``, ``model_manager`` (constructor).
 """
 
 from typing import List, Dict, Any, Optional
@@ -22,23 +28,35 @@ logger = logging.getLogger(__name__)
 
 
 class UserService:
-    """Service for user profile management and behavior analysis."""
-    
+    """In-memory user store with preference normalization hooks.
+
+    Attributes:
+        model_manager: Reserved ML entry point for future enrichment.
+        user_profiles: Map of ``user_id`` to ``UserProfile``.
+        interactions: Map of ``user_id`` to chronological ``UserInteraction`` list.
+    """
+
     def __init__(self, model_manager):
-        """Initialize with ML model manager."""
+        """Creates the service with an attached model manager.
+
+        Args:
+            model_manager: Shared ``ModelManager`` instance from the app container.
+        """
         self.model_manager = model_manager
         self.user_profiles = {}  # In-memory storage (replace with database in production)
         self.interactions = {}  # Store user interactions
     
     async def create_user_profile(self, profile: UserProfile) -> UserProfile:
-        """
-        Create a new user profile.
-        
+        """Persists a new profile after validation and preference analysis.
+
         Args:
-            profile: User profile data
-            
+            profile: Incoming profile; email must contain ``@``.
+
         Returns:
-            Created user profile
+            Stored ``UserProfile`` with analyzed preferences and timestamps.
+
+        Raises:
+            ValueError: If the user already exists or email format is invalid.
         """
         try:
             logger.info(f"Creating profile for user {profile.user_id}")
@@ -81,14 +99,13 @@ class UserService:
             raise
     
     async def get_user_profile(self, user_id: str) -> Optional[UserProfile]:
-        """
-        Get user profile by ID.
-        
+        """Fetches a profile by id.
+
         Args:
-            user_id: User identifier
-            
+            user_id: Primary key for the in-memory store.
+
         Returns:
-            User profile or None if not found
+            ``UserProfile`` if present, else ``None`` (also on unexpected errors).
         """
         try:
             return self.user_profiles.get(user_id)
@@ -97,15 +114,14 @@ class UserService:
             return None
     
     async def update_user_profile(self, user_id: str, profile_update: UserProfileUpdate) -> Optional[UserProfile]:
-        """
-        Update user profile.
-        
+        """Merges partial updates; re-runs preference analysis when preferences change.
+
         Args:
-            user_id: User identifier
-            profile_update: Profile update data
-            
+            user_id: Target user.
+            profile_update: Fields to merge (preferences, location, travel history).
+
         Returns:
-            Updated user profile or None if not found
+            Updated ``UserProfile``, or ``None`` if the user does not exist or on error.
         """
         try:
             logger.info(f"Updating profile for user {user_id}")
@@ -139,15 +155,14 @@ class UserService:
             return None
     
     async def update_user_preferences(self, user_id: str, preferences: UserPreferences) -> bool:
-        """
-        Update user preferences specifically.
-        
+        """Replaces the user's ``UserPreferences`` block after analysis.
+
         Args:
-            user_id: User identifier
-            preferences: New preferences
-            
+            user_id: Target user.
+            preferences: New preference payload.
+
         Returns:
-            True if successful, False if user not found
+            ``True`` if updated, ``False`` if the user is missing or on error.
         """
         try:
             logger.info(f"Updating preferences for user {user_id}")
@@ -173,11 +188,13 @@ class UserService:
             return False
     
     async def record_interaction(self, interaction: UserInteraction):
-        """
-        Record user interaction with recommendations.
-        
+        """Appends an interaction and triggers a preference-learning hook.
+
         Args:
-            interaction: User interaction data
+            interaction: Typed interaction record for the user.
+
+        Raises:
+            Exception: Propagates unexpected storage errors after logging.
         """
         try:
             logger.info(f"Recording interaction for user {interaction.user_id}")
@@ -201,15 +218,14 @@ class UserService:
             raise
     
     async def get_interaction_history(self, user_id: str, limit: int) -> List[UserInteraction]:
-        """
-        Get user interaction history.
-        
+        """Returns the most recent interactions, optionally capped.
+
         Args:
-            user_id: User identifier
-            limit: Maximum number of interactions to return
-            
+            user_id: Target user.
+            limit: Max items; ``<= 0`` returns the full stored list.
+
         Returns:
-            List of user interactions
+            Slice of interactions newest-last, or empty list on error.
         """
         try:
             user_interactions = self.interactions.get(user_id, [])
@@ -219,14 +235,13 @@ class UserService:
             return []
     
     async def generate_user_insights(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Generate user behavior insights and analytics.
-        
+        """Builds a dashboard-oriented summary from profile and interaction history.
+
         Args:
-            user_id: User identifier
-            
+            user_id: Target user.
+
         Returns:
-            User insights dictionary or None if user not found
+            Structured insights dict, or ``None`` if the profile is missing or on error.
         """
         try:
             logger.info(f"Generating insights for user {user_id}")
@@ -270,14 +285,13 @@ class UserService:
             return None
     
     async def delete_user_profile(self, user_id: str) -> bool:
-        """
-        Delete user profile and all associated data.
-        
+        """Removes profile and interaction rows for the user.
+
         Args:
-            user_id: User identifier
-            
+            user_id: Target user.
+
         Returns:
-            True if successful, False if user not found
+            ``True`` on success, ``False`` if deletion raises after logging.
         """
         try:
             logger.info(f"Deleting profile for user {user_id}")
@@ -300,14 +314,13 @@ class UserService:
     # Private helper methods
     
     async def _analyze_preferences(self, preferences: UserPreferences) -> UserPreferences:
-        """
-        Analyze and enhance user preferences using ML models.
-        
+        """Fills sensible defaults and placeholder enrichment for preferences.
+
         Args:
-            preferences: Raw user preferences
-            
+            preferences: Source preferences object.
+
         Returns:
-            Enhanced preferences with ML insights
+            Normalized ``UserPreferences``; falls back to input on error.
         """
         try:
             # In production, use ML model to analyze preferences
@@ -330,11 +343,10 @@ class UserService:
             return preferences
     
     async def _update_preferences_from_interaction(self, interaction: UserInteraction):
-        """
-        Update user preferences based on interaction patterns.
-        
+        """Hook for future online learning; currently logs only.
+
         Args:
-            interaction: User interaction data
+            interaction: Latest user interaction.
         """
         try:
             # Get user profile
@@ -351,7 +363,7 @@ class UserService:
             logger.error(f"Error updating preferences from interaction: {str(e)}")
     
     async def _analyze_preference_patterns(self, preferences: UserPreferences) -> Dict[str, Any]:
-        """Analyze preference patterns."""
+        """Derives a compact preference summary for insight payloads."""
         preference_list = preferences.preferences or []
         
         return {
@@ -362,7 +374,7 @@ class UserService:
         }
     
     async def _analyze_behavior_patterns(self, interactions: List[UserInteraction]) -> Dict[str, Any]:
-        """Analyze user behavior patterns from interactions."""
+        """Computes engagement and coarse behavioral stats from stored interactions."""
         if not interactions:
             return {
                 'engagement_rate': 0.0,

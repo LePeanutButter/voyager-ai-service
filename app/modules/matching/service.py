@@ -1,8 +1,15 @@
-"""
-Traveler matching service for finding compatible travel partners.
+"""Traveler matching: scoring, ranking, and connection lifecycle (demo data).
 
-Implements compatibility algorithms and connection management
-for matching travelers with similar interests and preferences.
+Purpose:
+    Score candidate travelers, explain multidimensional compatibility,
+    and manage simple connection records with optional learning feedback.
+
+Responsibilities:
+    Mock profile resolution, compatibility math, buddy lists, and weight updates
+    via ``MatchingLearningStore``.
+
+Dependencies:
+    ``settings``, enums, ``matching.schemas``, ``model_manager``, ``MatchingLearningStore``.
 """
 
 from typing import List, Dict, Any, Optional
@@ -22,24 +29,39 @@ logger = logging.getLogger(__name__)
 
 
 class MatchingService:
-    """Service for finding compatible travel partners."""
-    
+    """Orchestrates match discovery, scoring, and connection state.
+
+    Attributes:
+        model_manager: Loads optional ``traveler_matching_model`` for blended scores.
+        learning_store: Persists and adjusts dimension weights from outcomes.
+        connections: In-memory connection documents keyed by synthetic id.
+        user_profiles: Legacy mock map (supplemented by ``_get_user_profile``).
+    """
+
     def __init__(self, model_manager, learning_store: MatchingLearningStore):
-        """Initialize with ML model manager and continuous-learning store (PBI 27)."""
+        """Wires model access and the continuous-learning store (PBI 27).
+
+        Args:
+            model_manager: Shared model registry.
+            learning_store: Store that records successes, incompatibilities, and ratings.
+        """
         self.model_manager = model_manager
         self.learning_store = learning_store
         self.connections = {}  # In-memory storage (replace with database in production)
         self.user_profiles = {}  # Mock user profiles for matching
     
     async def find_travel_partners(self, request: TravelerMatchRequest) -> MatchingResponse:
-        """
-        Find compatible travel partners based on preferences and context.
-        
+        """Scores candidates, filters by minimum compatibility, and returns ranked matches.
+
         Args:
-            request: Traveler matching request with preferences and criteria
-            
+            request: Seeker id, location/dates, preferences, and result cap.
+
         Returns:
-            MatchingResponse with compatible travelers and compatibility scores
+            ``MatchingResponse`` with ``TravelerMatch`` rows and search metadata.
+
+        Raises:
+            ValueError: If the seeker's profile cannot be resolved.
+            Exception: Logged and re-raised for upstream handling.
         """
         try:
             logger.info(f"Finding travel partners for user {request.user_id}")
@@ -84,15 +106,15 @@ class MatchingService:
             raise
     
     async def calculate_compatibility(self, user_id: str, target_user_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Calculate detailed compatibility between two users.
-        
+        """Returns a multidimensional compatibility breakdown plus ML blend.
+
         Args:
-            user_id: First user identifier
-            target_user_id: Second user identifier
-            
+            user_id: First traveler.
+            target_user_id: Second traveler.
+
         Returns:
-            Detailed compatibility analysis or None if users not found
+            Analysis dict with overall score, dimensions, weights, and reasons,
+            or ``None`` if either profile is missing or on error.
         """
         try:
             logger.info(f"Calculating compatibility between {user_id} and {target_user_id}")
@@ -148,16 +170,18 @@ class MatchingService:
             return None
     
     async def initiate_connection(self, user_id: str, target_user_id: str, message: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Initiate connection with a matched traveler.
-        
+        """Creates a pending connection record with timestamps.
+
         Args:
-            user_id: User initiating the connection
-            target_user_id: Target user
-            message: Optional connection message
-            
+            user_id: Initiator.
+            target_user_id: Recipient.
+            message: Optional opener text.
+
         Returns:
-            Connection details
+            Connection document including synthetic ``connection_id``.
+
+        Raises:
+            Exception: Logged and re-raised on persistence failures.
         """
         try:
             logger.info(f"Initiating connection from {user_id} to {target_user_id}")
@@ -185,15 +209,14 @@ class MatchingService:
             raise
     
     async def get_user_connections(self, user_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
-        """
-        Get user's connections and connection requests.
-        
+        """Lists connections where the user is initiator or target, newest first.
+
         Args:
-            user_id: User identifier
-            status: Optional status filter (pending, accepted, declined)
-            
+            user_id: Participant to filter on.
+            status: Optional exact status match (e.g. ``pending``).
+
         Returns:
-            List of connections
+            Matching connection dicts, or empty list on error.
         """
         try:
             logger.info(f"Fetching connections for user {user_id}")
@@ -217,16 +240,15 @@ class MatchingService:
             return []
     
     async def respond_to_connection(self, connection_id: str, response: str, message: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """
-        Respond to a connection request.
-        
+        """Updates status and optional response message for a connection.
+
         Args:
-            connection_id: Connection identifier
-            response: Response type (accept, decline)
-            message: Optional response message
-            
+            connection_id: Key in ``self.connections``.
+            response: New status string (e.g. accept/decline).
+            message: Optional reply body.
+
         Returns:
-            Updated connection or None if not found
+            Updated connection dict, or ``None`` if unknown or on error.
         """
         try:
             logger.info(f"Responding to connection {connection_id} with {response}")
@@ -249,16 +271,15 @@ class MatchingService:
             return None
     
     async def get_travel_buddy_recommendations(self, user_id: str, location: Optional[str] = None, limit: int = 10) -> List[TravelerMatch]:
-        """
-        Get travel buddy recommendations based on user preferences.
-        
+        """Ranks all mock users by simple compatibility, optionally by location.
+
         Args:
-            user_id: User identifier
-            location: Optional location filter
-            limit: Maximum number of recommendations
-            
+            user_id: Seeker; excluded from results.
+            location: If set, requires exact mock ``location`` string match.
+            limit: Max buddies to return.
+
         Returns:
-            List of recommended travel buddies
+            Sorted ``TravelerMatch`` list, possibly empty if profile missing or on error.
         """
         try:
             logger.info(f"Getting travel buddy recommendations for user {user_id}")
@@ -309,14 +330,16 @@ class MatchingService:
             return []
     
     async def record_match_feedback(self, user_id: str, target_user_id: str, rating: int, feedback_text: Optional[str] = None):
-        """
-        Record feedback for a travel match.
-        
+        """Logs qualitative feedback and nudges learned weights from numeric rating.
+
         Args:
-            user_id: User identifier
-            target_user_id: Matched user identifier
-            rating: Rating from 1-5
-            feedback_text: Optional detailed feedback
+            user_id: Rater.
+            target_user_id: Other party in the match.
+            rating: 1–5 score consumed by ``_update_matching_algorithm``.
+            feedback_text: Optional free-text note (logged only in demo).
+
+        Raises:
+            Exception: Propagates after logging on unexpected failures.
         """
         try:
             logger.info(f"Recording match feedback from {user_id} for {target_user_id}")
@@ -342,7 +365,7 @@ class MatchingService:
     # Private helper methods
     
     async def _get_user_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get user profile for matching."""
+        """Resolves a traveler dict from the embedded mock catalog."""
         # Mock implementation - in production, query database
         mock_profiles = {
             'user1': {
@@ -386,7 +409,7 @@ class MatchingService:
         return mock_profiles.get(user_id)
     
     async def _get_candidate_travelers(self, request: TravelerMatchRequest) -> List[Dict[str, Any]]:
-        """Get candidate travelers for matching."""
+        """Returns all mock users except the requester, with optional location presence filter."""
         # Mock implementation - in production, query database with filters
         all_users = await self._get_all_users()
         
@@ -400,7 +423,7 @@ class MatchingService:
         return candidates
     
     async def _get_all_users(self) -> List[Dict[str, Any]]:
-        """Get all users for matching (mock implementation)."""
+        """Full mock roster used by buddy recommendations and candidate expansion."""
         return [
             {
                 'user_id': 'user1',
@@ -444,7 +467,7 @@ class MatchingService:
         ]
     
     async def _calculate_compatibility_scores(self, user_profile: Dict[str, Any], candidates: List[Dict[str, Any]], request: TravelerMatchRequest) -> List[Dict[str, Any]]:
-        """Calculate compatibility scores for all candidates."""
+        """Scores each candidate, boosts overlap with requested preferences, and attaches commons."""
         scored_candidates = []
         
         for candidate in candidates:
@@ -467,7 +490,7 @@ class MatchingService:
         return scored_candidates
     
     async def _calculate_simple_compatibility(self, user1: Dict[str, Any], user2: Dict[str, Any]) -> float:
-        """Aggregate compatibility using learned weights over multidimensional scores (PBI 26/27)."""
+        """Weighted sum of PBI 26 dimensions using ``learning_store`` weights (clamped to 1.0)."""
         dimensions = await self._compute_match_dimensions(user1, user2)
         weights = self.learning_store.get_weights()
         return min(
@@ -476,13 +499,13 @@ class MatchingService:
         )
     
     async def _get_common_preferences(self, prefs1: List[TravelPreference], prefs2: List[TravelPreference]) -> List[TravelPreference]:
-        """Get common preferences between two users."""
+        """Intersection of two preference lists as a stable list."""
         set1 = set(prefs1)
         set2 = set(prefs2)
         return list(set1.intersection(set2))
     
     async def _apply_matching_filters(self, scored_candidates: List[Dict[str, Any]], max_matches: int) -> List[TravelerMatch]:
-        """Apply filters and ranking to final matches."""
+        """Drops below-threshold scores, sorts descending, and maps to ``TravelerMatch``."""
         # Filter by minimum compatibility score
         filtered_candidates = [
             candidate for candidate in scored_candidates
@@ -510,7 +533,7 @@ class MatchingService:
         return matches
     
     async def _calculate_preference_compatibility(self, prefs1: List[TravelPreference], prefs2: List[TravelPreference]) -> Dict[str, Any]:
-        """Calculate preference compatibility."""
+        """Jaccard-style overlap on enumerated travel preferences."""
         set1 = set(prefs1)
         set2 = set(prefs2)
         
@@ -528,7 +551,7 @@ class MatchingService:
         }
     
     async def _calculate_travel_style_compatibility(self, user1: Dict[str, Any], user2: Dict[str, Any]) -> Dict[str, Any]:
-        """Calculate travel style compatibility."""
+        """Binary style match (1.0 equal, 0.5 otherwise) with echo fields."""
         style1 = user1.get('travel_style', '')
         style2 = user2.get('travel_style', '')
         
@@ -542,7 +565,7 @@ class MatchingService:
         }
     
     async def _calculate_demographic_compatibility(self, user1: Dict[str, Any], user2: Dict[str, Any]) -> Dict[str, Any]:
-        """Calculate demographic compatibility."""
+        """Age-gap heuristic mapped to a 0–1 compatibility score."""
         age1 = user1.get('age', 0)
         age2 = user2.get('age', 0)
         
@@ -567,7 +590,7 @@ class MatchingService:
     async def _generate_multidimensional_explanation(
         self, dimensions: Dict[str, float], weights: Dict[str, float]
     ) -> str:
-        """Human-readable rationale from dimension scores."""
+        """Ranks dimensions by weighted score and returns a short Spanish summary string."""
         ranked = sorted(dimensions.items(), key=lambda kv: kv[1] * weights.get(kv[0], 0), reverse=True)
         top = [f"{name} ({score:.0%})" for name, score in ranked[:3] if score > 0.35]
         if not top:
@@ -577,7 +600,7 @@ class MatchingService:
     async def _compute_match_dimensions(
         self, user_a: Dict[str, Any], user_b: Dict[str, Any]
     ) -> Dict[str, float]:
-        """PBI 26: interests, travel_style, budget, pace, personality (0–1 each)."""
+        """PBI 26: per-dimension 0–1 signals (interests, style, budget, pace, personality)."""
         prefs_a = {p.value for p in user_a.get("preferences", [])}
         prefs_b = {p.value for p in user_b.get("preferences", [])}
         union = prefs_a | prefs_b
@@ -614,7 +637,7 @@ class MatchingService:
         target_profile: Dict[str, Any],
         dimensions: Dict[str, float],
     ) -> float:
-        """Blend traveler matching model output when available (PBI 26)."""
+        """Uses ``traveler_matching_model`` when loaded; otherwise averages dimension scores."""
         model = self.model_manager.get_model("traveler_matching_model")
         if not model or not model.is_loaded:
             return float(sum(dimensions.values()) / max(len(dimensions), 1))
@@ -640,7 +663,7 @@ class MatchingService:
         dimension_snapshot: Optional[Dict[str, float]] = None,
         notes: Optional[str] = None,
     ) -> Dict[str, float]:
-        """PBI 27: reinforce or dampen weights from explicit connection outcomes."""
+        """PBI 27: records success/incompatibility against optional dimension snapshot."""
         snap = dimension_snapshot
         if snap is None:
             ua = await self._get_user_profile(user_id)
@@ -654,7 +677,7 @@ class MatchingService:
         return self.learning_store.record_incompatible(snap, notes)
 
     async def _update_matching_algorithm(self, user_id: str, target_user_id: str, rating: int):
-        """Nudge learned weights from numeric feedback (PBI 27)."""
+        """Delegates rating-side learning to ``learning_store.record_rating_feedback``."""
         self.learning_store.record_rating_feedback(rating)
         logger.info(
             "Updated matching weights from rating %s/5 (users %s <-> %s)",

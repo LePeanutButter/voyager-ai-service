@@ -1,12 +1,11 @@
-"""
-Chat feature package — AI Travel Chatbot.
+"""Conversational travel planning chat assisted by rules and optional LLM.
 
-Components:
-  schemas.py              — ChatRequest / ChatResponse / TravelContext / Suggestion
-  memory.py               — Per-user in-memory ConversationMemory
-  context_extractor.py    — Rule-based intent & context extraction from user messages
-  recommendation_engine.py — Budget/style/duration-aware structured recommendations
-  proactive_engine.py     — Rule-based proactive suggestion triggers
-  service.py              — ChatService orchestrator (uses all of the above)
-  router.py               — FastAPI router exposing POST /chat and history endpoints
+Main components:
+    Schemas (`schemas`), per-user memory (`memory`), context extraction
+    (`context_extractor`), suggestion engine (`recommendation_engine`),
+    proactive hints (`proactive_engine`), orchestrator (`service`), and HTTP router
+    in `app.api.v1.chat.router`.
+
+Dependencies:
+    `app.integrations` (LLM and fallback), `app.core.config`.
 """

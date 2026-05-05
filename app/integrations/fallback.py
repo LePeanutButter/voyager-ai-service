@@ -1,13 +1,15 @@
-"""
-Rule-based fallback responder.
+"""Deterministic responses when there is no LLM or it fails.
 
-Used when LLM_PROVIDER == "none" or when all LLM calls fail.
-Generates coherent, context-aware travel responses using deterministic
-logic derived from the extracted TravelContext — no hardcoded strings,
-no fake AI.
+Purpose:
+    Generate coherent text from ``TravelContext`` and precomputed suggestions,
+    without invented booking strings or real-time data.
 
-All public methods mirror the signature expectations of ChatService so
-they are drop-in replacements for LLM-generated content.
+Responsibilities:
+    Format itineraries, intros, and budget or follow-up messages;
+    expose an API aligned with ``ChatService`` expectations.
+
+Dependencies:
+    ``TravelContext`` and ``Suggestion`` types (``TYPE_CHECKING`` only).
 """
 
 import logging
@@ -20,6 +22,14 @@ logger = logging.getLogger(__name__)
 
 
 def _format_destinations(dests: List["Suggestion"]) -> str:
+    """Formats the first destination suggestion as a highlighted block.
+
+    Args:
+        dests: List of suggestions filtered as destinations.
+
+    Returns:
+        Markdown text or empty string.
+    """
     if not dests:
         return ""
     d = dests[0]
@@ -27,9 +37,18 @@ def _format_destinations(dests: List["Suggestion"]) -> str:
 
 
 def _format_activities(acts: List["Suggestion"], context: "TravelContext") -> str:
+    """Groups activities by day (``Day N:`` prefix) and adds estimated costs.
+
+    Args:
+        acts: Suggestions that are not the primary destination.
+        context: Context for per-person cost wording.
+
+    Returns:
+        Text block with per-day lists and loose activities.
+    """
     if not acts:
         return ""
-        
+
     parts = []
     days_dict = {}
     others = []
@@ -69,6 +88,15 @@ def _format_activities(acts: List["Suggestion"], context: "TravelContext") -> st
 
 
 def _format_itinerary(suggestions: List["Suggestion"], context: "TravelContext") -> str:
+    """Combines destination and activity formatting from typed suggestions.
+
+    Args:
+        suggestions: Mix of destinations and activities.
+        context: Travel context for costs.
+
+    Returns:
+        Itinerary text or empty string.
+    """
     if not suggestions:
         return ""
 
@@ -76,11 +104,11 @@ def _format_itinerary(suggestions: List["Suggestion"], context: "TravelContext")
     acts = [s for s in suggestions if s.activity_type != "destination"]
 
     parts = []
-    
+
     dest_str = _format_destinations(dests)
     if dest_str:
         parts.append(dest_str)
-        
+
     acts_str = _format_activities(acts, context)
     if acts_str:
         parts.append(acts_str)
@@ -89,6 +117,14 @@ def _format_itinerary(suggestions: List["Suggestion"], context: "TravelContext")
 
 
 def _build_intro_string(context: "TravelContext") -> str:
+    """Builds an intro phrase (duration, budget, style, group).
+
+    Args:
+        context: Merged trip state.
+
+    Returns:
+        English phrase to prepend to the reply body.
+    """
     intro_words = []
     if context.duration_days:
         intro_words.append(f"a {context.duration_days}-day")
@@ -122,7 +158,15 @@ def build_planning_reply(
     context: "TravelContext",
     suggestions: List["Suggestion"],
 ) -> str:
-    """Build a reply for a travel planning intent."""
+    """Builds the reply for a travel-planning intent.
+
+    Args:
+        context: Context extracted from the message.
+        suggestions: Suggestions from rules or engine.
+
+    Returns:
+        Text ready to show the user.
+    """
     parts = []
 
     intro_str = _build_intro_string(context)
@@ -145,7 +189,16 @@ def build_budget_reply(
     suggestions: List["Suggestion"],
     old_budget: Optional[float],
 ) -> str:
-    """Build a reply acknowledging a budget constraint update."""
+    """Builds the reply after updating budget in context.
+
+    Args:
+        context: Context with updated ``budget_usd``.
+        suggestions: Recalculated suggestions.
+        old_budget: Previous budget if any.
+
+    Returns:
+        Text acknowledging the change and listing itinerary when present.
+    """
     parts = []
 
     if old_budget is not None and context.budget_usd is not None:
@@ -170,7 +223,16 @@ def build_follow_up_reply(
     suggestions: List["Suggestion"],
     user_message: str,
 ) -> str:
-    """Build a generic follow-up reply."""
+    """Builds a generic follow-up reply from keyword heuristics.
+
+    Args:
+        context: Current context.
+        suggestions: Optional suggestions.
+        user_message: Latest user message (English expected for heuristics).
+
+    Returns:
+        Text with thematic acknowledgment and recommendations when present.
+    """
     msg_lower = user_message.lower()
     parts = []
 
@@ -196,7 +258,11 @@ def build_follow_up_reply(
 
 
 def build_greeting_reply() -> str:
-    """Return a welcoming introduction message."""
+    """Returns the assistant's static welcome message.
+
+    Returns:
+        Multi-line text describing bot capabilities.
+    """
     return (
         "Hello! I'm your AI travel planning assistant. 🌍\n\n"
         "I can help you:\n"
@@ -214,7 +280,14 @@ def build_greeting_reply() -> str:
 # ---------------------------------------------------------------------------
 
 def _identify_missing_context(context: "TravelContext") -> str:
-    """Return a human-readable list of missing context fields."""
+    """Summarizes missing fields to ask the user for clarifications.
+
+    Args:
+        context: Partial context.
+
+    Returns:
+        Human-readable string joined with `` and `` (may be empty if nothing missing).
+    """
     missing: List[str] = []
     if not context.destination:
         missing.append("destination")
@@ -226,7 +299,14 @@ def _identify_missing_context(context: "TravelContext") -> str:
 
 
 def _budget_tier(budget_usd: Optional[float]) -> str:
-    """Classify budget as 'budget', 'mid-range', or 'premium'."""
+    """Classifies budget into product bands.
+
+    Args:
+        budget_usd: Amount in USD or ``None``.
+
+    Returns:
+        Label ``budget``, ``mid-range``, or ``premium``.
+    """
     if budget_usd is None:
         return "mid-range"
     if budget_usd < 500:

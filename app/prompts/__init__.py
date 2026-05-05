@@ -1,11 +1,12 @@
-"""
-Prompts package — structured prompt templates for the travel chatbot.
+"""Text templates for the travel chatbot prompts.
 
-Each module exposes a single render_*() function that returns a
-fully-formed prompt string ready for injection into an LLM call.
+Responsibilities:
+    Centralize system strings and `render_*` functions that build the user
+    message or context sent to the LLM.
 
-Templates:
-  travel_planning.py   — main system + initial planning prompt
-  budget_adjustment.py — prompt for budget-aware response generation
-  follow_up_context.py — prompt for multi-turn context continuation
+Modules:
+    `travel_planning`, `budget_adjustment`, `follow_up_context`.
+
+Dependencies:
+    Types under `TYPE_CHECKING` from `app.modules.chat.schemas` (no runtime import).
 """

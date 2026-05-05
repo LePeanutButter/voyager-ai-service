@@ -1,9 +1,15 @@
-"""
-Predictive travel trends (Feature 15).
+"""Predictive travel trends engine (Feature 15).
 
-PBI 30: emerging destinations from aggregated search-style signals (30-day windows).
-PBI 31: segment behavior insights and weekly micro-trend + partner notifications (API payload;
-        real weekly jobs + outbound notifications belong in infrastructure).
+Purpose:
+    Simulate aggregated search-like signal ingest and expose emerging destinations,
+    segment insights, and a weekly partner digest.
+
+Responsibilities:
+    Refresh in-memory metrics (PBI 30), build segment and micro-trend payloads (PBI 31);
+    real jobs and outbound notifications stay out of scope.
+
+Dependencies:
+    ``settings`` for thresholds and windows, schemas in ``app.modules.trends.schemas``.
 """
 
 from __future__ import annotations
@@ -93,18 +99,24 @@ _SEGMENT_LIBRARY: Dict[str, Dict[str, Any]] = {
 
 
 class TrendsService:
-    """In-memory trend engine; replace with warehouse + batch ML in production."""
+    """In-memory trends engine; replace with warehouse and batch ML in production.
+
+    Important attributes:
+        _last_refresh: Timestamp of last successful ``refresh``.
+        _emerging: Materialized list of ``EmergingDestinationTrend``.
+    """
 
     def __init__(self) -> None:
         self._last_refresh: Optional[datetime] = None
         self._emerging: List[EmergingDestinationTrend] = []
 
     async def ensure_initialized(self) -> None:
+        """Ensures materialized data by calling ``refresh`` if the list is empty."""
         if not self._emerging:
             await self.refresh()
 
     async def refresh(self) -> None:
-        """Recompute emerging flags from the last configured window (mock ingest)."""
+        """Recomputes emerging flags from mock seed and configuration thresholds."""
         window = settings.TREND_ANALYSIS_WINDOW_DAYS
         threshold = settings.TREND_EMERGENCE_SURGE_RATIO
         emerging: List[EmergingDestinationTrend] = []
@@ -139,6 +151,14 @@ class TrendsService:
         logger.info("Trends refreshed: %s emerging of %s", sum(1 for e in emerging if e.is_emerging), len(emerging))
 
     def get_dashboard(self) -> TrendsDashboardResponse:
+        """Returns the dashboard with only emerging-flagged destinations and summary.
+
+        Returns:
+            ``TrendsDashboardResponse`` with window and filtered list.
+
+        Raises:
+            RuntimeError: If ``ensure_initialized`` or ``refresh`` was not called first.
+        """
         if not self._emerging:
             raise RuntimeError("TrendsService not initialised; call ensure_initialized() or refresh()")
         emerging_only = [e for e in self._emerging if e.is_emerging]
@@ -154,11 +174,21 @@ class TrendsService:
         )
 
     def get_full_signals(self) -> List[EmergingDestinationTrend]:
+        """Exposes all trend rows without filtering by ``is_emerging``.
+
+        Returns:
+            Shallow copy of the internal list.
+        """
         return list(self._emerging)
 
     def emerging_for_preferences(self, pref_values: Set[str]) -> List[Dict[str, Any]]:
-        """
-        Destinations currently emerging and compatible with user tag preferences (PBI 30 AC2).
+        """Lists emerging destinations whose tags intersect user preferences.
+
+        Args:
+            pref_values: Set of preference tags (e.g. ``cultural``).
+
+        Returns:
+            Dicts sorted by ``surge_ratio`` descending.
         """
         out: List[Dict[str, Any]] = []
         for t in self._emerging:
@@ -177,7 +207,14 @@ class TrendsService:
         return sorted(out, key=lambda x: x["surge_ratio"], reverse=True)
 
     def get_segment_insights(self, segment_id: str) -> SegmentInsightsResponse:
-        """PBI 31: predictive-style snapshot for a traveler segment."""
+        """Returns a predictive-style snapshot for a traveler segment (PBI 31).
+
+        Args:
+            segment_id: Key in the internal library; falls back to ``family_budget``.
+
+        Returns:
+            Response with seasonal patterns and mock budget profile.
+        """
         data = _SEGMENT_LIBRARY.get(segment_id)
         if not data:
             data = _SEGMENT_LIBRARY["family_budget"]
@@ -203,7 +240,11 @@ class TrendsService:
         return SegmentInsightsResponse(generated_at=datetime.now(timezone.utc), insights=insight)
 
     def get_weekly_digest(self) -> WeeklyTrendsDigestResponse:
-        """PBI 31: micro-tendencias + avisos para empresas (payload semanal simulado)."""
+        """Builds weekly digest with micro-trends and business notices (simulated, PBI 31).
+
+        Returns:
+            Payload with opportunities and notifications anchored to the current ISO week.
+        """
         iso = datetime.now(timezone.utc).isocalendar()
         week_label = f"{iso.year}-W{iso.week:02d}"
 

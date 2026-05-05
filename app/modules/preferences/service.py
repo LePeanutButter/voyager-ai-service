@@ -1,4 +1,16 @@
-"""Session-backed orchestration for the preference questionnaire."""
+"""Session-backed orchestration for the adaptive preference questionnaire.
+
+Purpose:
+    Manage in-memory sessions, merge answers with the branching engine, and
+    build the aggregated profile on submit.
+
+Responsibilities:
+    Create/resume sessions, run ``process_step`` and ``submit``, map answers to
+    ``PreferenceProfilePayload``.
+
+Dependencies:
+    ``AdaptiveQuestionnaireEngine``, Pydantic schemas in ``schemas``.
+"""
 
 from __future__ import annotations
 
@@ -22,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class _Session:
+    """Internal mutable state for one questionnaire run."""
+
     session_id: str
     user_id: str
     answers: Dict[str, List[str]] = field(default_factory=dict)
@@ -29,13 +43,28 @@ class _Session:
 
 
 class PreferenceQuestionnaireService:
-    """In-memory sessions; suitable for single-instance or dev — swap for Redis in prod."""
+    """Coordinates questionnaire steps and final profile assembly.
+
+    Uses in-memory sessions (fine for single-instance or dev; use Redis in production).
+
+    Attributes:
+        _sessions: Map of session_id to ``_Session``.
+        _engine: Rule engine that selects the next questions.
+    """
 
     def __init__(self) -> None:
         self._sessions: Dict[str, _Session] = {}
         self._engine = AdaptiveQuestionnaireEngine()
 
     def _new_session(self, user_id: str) -> _Session:
+        """Creates and registers a new session for the user.
+
+        Args:
+            user_id: External user identifier.
+
+        Returns:
+            Fresh ``_Session`` with generated ``session_id``.
+        """
         sid = str(uuid.uuid4())
         sess = _Session(session_id=sid, user_id=user_id)
         self._sessions[sid] = sess
@@ -43,9 +72,21 @@ class PreferenceQuestionnaireService:
         return sess
 
     def _get_session(self, session_id: str) -> Optional[_Session]:
+        """Looks up a session by id, if still present."""
         return self._sessions.get(session_id)
 
     async def process_step(self, body: QuestionnaireStepRequest) -> QuestionnaireStepResponse:
+        """Applies answers for one step and returns the next questions or completion.
+
+        Args:
+            body: User id, optional session id, and answers for this step.
+
+        Returns:
+            ``QuestionnaireStepResponse`` with updated session and questions.
+
+        Raises:
+            ValueError: Unknown session, user mismatch, or invalid session id.
+        """
         if body.session_id:
             sess = self._get_session(body.session_id)
             if not sess:
@@ -73,6 +114,14 @@ class PreferenceQuestionnaireService:
         )
 
     def _build_profile(self, answers: Dict[str, List[str]]) -> tuple[str, PreferenceProfilePayload, str]:
+        """Derives primary category, structured profile, and text summary from answers.
+
+        Args:
+            answers: Merged question_id → selected option ids.
+
+        Returns:
+            Tuple of (primary_category, payload, ai_context_summary).
+        """
         primary = (answers.get("primary_travel_style") or ["unknown"])[0]
         categories: List[str] = []
         interests: List[str] = []
@@ -130,6 +179,17 @@ class PreferenceQuestionnaireService:
         return primary, payload, summary
 
     async def submit(self, body: QuestionnaireSubmitRequest) -> QuestionnaireSubmitResponse:
+        """Validates completion and returns the final profile for the session.
+
+        Args:
+            body: User, session, and final answers.
+
+        Returns:
+            ``QuestionnaireSubmitResponse`` with profile and summary.
+
+        Raises:
+            ValueError: Invalid session, user mismatch, or questionnaire incomplete.
+        """
         sess = self._get_session(body.session_id)
         if not sess:
             raise ValueError("Invalid or expired session_id")

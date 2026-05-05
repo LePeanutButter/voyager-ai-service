@@ -1,8 +1,15 @@
-"""
-Rule-based adaptive questionnaire engine.
+"""Rule-based adaptive questionnaire engine.
 
-Branches follow-up questions from the primary travel style
-(adventure / cultural / relax) as required by the product story.
+Purpose:
+    Branch follow-up questions from the primary travel style (adventure, cultural,
+    relax) per product rules.
+
+Responsibilities:
+    Merge step answers, derive the primary category, and return the next question
+    set or completion.
+
+Dependencies:
+    Pydantic models ``AnswerItem``, ``QuestionnaireQuestion``, ``QuestionOption``.
 """
 
 from __future__ import annotations
@@ -18,6 +25,17 @@ def _q(
     options: List[Tuple[str, str]],
     question_type: str = "single_choice",
 ) -> QuestionnaireQuestion:
+    """Builds a ``QuestionnaireQuestion`` from id/prompt and (id, label) pairs.
+
+    Args:
+        qid: Stable question identifier.
+        prompt: Text shown to the user.
+        options: List of (option_id, display_label).
+        question_type: ``single_choice`` or ``multi_choice``.
+
+    Returns:
+        Configured ``QuestionnaireQuestion``.
+    """
     return QuestionnaireQuestion(
         id=qid,
         prompt=prompt,
@@ -38,13 +56,22 @@ PRIMARY = _q(
 
 
 class AdaptiveQuestionnaireEngine:
-    """Selects the next question set from accumulated answers."""
+    """Selects the next question batch from accumulated answers (stateless logic)."""
 
     def merge_answers(
         self,
         existing: Dict[str, List[str]],
         incoming: List[AnswerItem],
     ) -> Dict[str, List[str]]:
+        """Merges new ``AnswerItem`` selections into the answer map (last write wins per question).
+
+        Args:
+            existing: Prior answers by question id.
+            incoming: New selections from the current step.
+
+        Returns:
+            Updated answer dictionary.
+        """
         merged = dict(existing)
         for item in incoming:
             if item.question_id and item.selected_option_ids:
@@ -52,6 +79,14 @@ class AdaptiveQuestionnaireEngine:
         return merged
 
     def derive_primary_category(self, answers: Dict[str, List[str]]) -> Optional[str]:
+        """Returns adventure/cultural/relax if the primary style question is answered.
+
+        Args:
+            answers: Current answer map.
+
+        Returns:
+            Primary category string or ``None`` if not yet chosen.
+        """
         style = (answers.get("primary_travel_style") or [None])[0]
         if style in ("adventure", "cultural", "relax"):
             return style
@@ -61,8 +96,13 @@ class AdaptiveQuestionnaireEngine:
         self,
         answers: Dict[str, List[str]],
     ) -> Tuple[List[QuestionnaireQuestion], bool, Optional[str]]:
-        """
-        Returns (questions, is_complete, derived_primary_category).
+        """Computes the next questions and completion state.
+
+        Args:
+            answers: All answers collected so far.
+
+        Returns:
+            Tuple of (next questions, whether flow is complete, derived primary category).
         """
         primary = self.derive_primary_category(answers)
         if primary is None:

@@ -1,16 +1,15 @@
+"""Prompt templates for travel planning with an LLM.
+
+Purpose:
+    Define the system prompt and build the enriched user turn with structured
+    context when an LLM provider is active.
+
+Responsibilities:
+    Expose ``SYSTEM_PROMPT`` and ``render_planning_prompt`` for the main chat flow.
+
+Dependencies:
+    ``TravelContext`` (conditional typing only).
 """
-Travel planning prompt template.
-
-Defines the system prompt and initial user-message prompt for the main
-travel planning conversation. Used when an LLM provider is active.
-
-The system prompt instructs the model on:
-  - Its role and personality
-  - Output format expectations (markdown, structured when needed)
-  - Domain constraints (budget awareness, activity types)
-  - What NOT to do (hallucinate bookings, claim real-time data)
-"""
-
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -51,16 +50,15 @@ def render_planning_prompt(
     context: "TravelContext",
     history_summary: Optional[str] = None,
 ) -> str:
-    """
-    Build the user-facing prompt for a travel planning request.
+    """Builds the user prompt for a planning request.
 
     Args:
-        user_message    : The raw user message.
-        context         : Current extracted travel context.
-        history_summary : Optional 1-2 sentence summary of prior conversation.
+        user_message: Raw user message.
+        context: Merged travel context up to the current turn.
+        history_summary: Optional 1–2 sentence summary of prior thread.
 
     Returns:
-        Formatted prompt string to send as the user turn.
+        String ready to send as the ``user`` turn to the LLM.
     """
     context_block = _render_context_block(context)
     history_block = f"\n## Conversation So Far\n{history_summary}\n" if history_summary else ""
@@ -74,7 +72,14 @@ def render_planning_prompt(
 
 
 def _render_context_block(context: "TravelContext") -> str:
-    """Render a structured context block from TravelContext."""
+    """Serializes ``TravelContext`` into a structured markdown block.
+
+    Args:
+        context: Trip state.
+
+    Returns:
+        Text with ``## Current Trip Context`` section.
+    """
     lines = ["## Current Trip Context"]
     lines.append(f"- Destination: {context.destination or 'Not specified'}")
     lines.append(

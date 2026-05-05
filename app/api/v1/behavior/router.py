@@ -1,4 +1,13 @@
-"""Behavior Analysis API routes."""
+"""HTTP router for user behavior tracking and analysis.
+
+Responsibilities:
+    Track interactions, run analysis, fetch summaries, batch tracking,
+    and clear in-memory data when applicable.
+
+Dependencies:
+    `BehaviorAnalysisServiceDep`, schemas in `app.modules.behavior.schemas`,
+    shared `APIResponse`.
+"""
 
 import logging
 from typing import List
@@ -22,6 +31,18 @@ async def track_user_behavior(
     body: BehaviorTrackingRequest,
     service: BehaviorAnalysisServiceDep,
 ):
+    """Persists or enqueues a single behavior event.
+
+    Args:
+        body: Event payload (user, type, metadata).
+        service: Behavior analysis service.
+
+    Returns:
+        `APIResponse` with `success` and confirmation data.
+
+    Raises:
+        HTTPException: 500 if tracking fails or on unexpected error.
+    """
     try:
         success = await service.track_interaction(body)
         if success:
@@ -47,6 +68,18 @@ async def analyze_user_behavior(
     body: BehaviorAnalysisRequest,
     service: BehaviorAnalysisServiceDep,
 ):
+    """Runs aggregated analysis and returns implicit preference updates.
+
+    Args:
+        body: Time window and flags for patterns/updates.
+        service: Analysis service.
+
+    Returns:
+        Result with detected patterns and preference hints.
+
+    Raises:
+        HTTPException: 400 on invalid parameters; 500 on internal error.
+    """
     try:
         result = await service.analyze_behavior(body)
         logger.info("Behavior analysis completed for user %s", body.user_id)
@@ -68,6 +101,19 @@ async def get_behavior_summary(
     service: BehaviorAnalysisServiceDep,
     days: int = 30,
 ):
+    """Returns aggregated metrics for the user's recent activity.
+
+    Args:
+        user_id: User identifier.
+        service: Analysis service.
+        days: Lookback window in days.
+
+    Returns:
+        Summary dict per service implementation.
+
+    Raises:
+        HTTPException: 404 if the service embeds an error in the payload; 500 on failure.
+    """
     try:
         summary = await service.get_user_behavior_summary(user_id, days)
         if "error" in summary:
@@ -88,6 +134,18 @@ async def batch_track_behavior(
     batch_requests: List[BehaviorTrackingRequest],
     service: BehaviorAnalysisServiceDep,
 ):
+    """Processes a list of behavior events sequentially.
+
+    Args:
+        batch_requests: Tracking requests collection.
+        service: Analysis service.
+
+    Returns:
+        `APIResponse` with success and failure counts.
+
+    Raises:
+        HTTPException: 500 on unhandled batch error.
+    """
     try:
         success_count = 0
         failed_count = 0
@@ -116,6 +174,19 @@ async def get_detected_patterns(
     service: BehaviorAnalysisServiceDep,
     days: int = 7,
 ):
+    """Returns only detected patterns via `analyze_behavior` with constrained flags.
+
+    Args:
+        user_id: User to analyze.
+        service: Analysis service.
+        days: Window in days.
+
+    Returns:
+        Dict with period, serialized pattern list, and confidence.
+
+    Raises:
+        HTTPException: 400 or 500 depending on validation and internal errors.
+    """
     try:
         req = BehaviorAnalysisRequest(
             user_id=user_id,
@@ -143,6 +214,18 @@ async def get_detected_patterns(
 
 @router.delete("/clear/{user_id}", response_model=APIResponse)
 async def clear_user_behavior_data(user_id: str, service: BehaviorAnalysisServiceDep):
+    """Clears in-memory behavior data for the user if present.
+
+    Args:
+        user_id: User whose data is purged.
+        service: Service instance (may expose `behavior_data`).
+
+    Returns:
+        `APIResponse` indicating whether rows were deleted.
+
+    Raises:
+        HTTPException: 500 on unexpected error.
+    """
     try:
         if hasattr(service, "behavior_data") and user_id in service.behavior_data:
             del service.behavior_data[user_id]
