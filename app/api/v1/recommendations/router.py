@@ -9,6 +9,7 @@ Dependencies:
 """
 
 import logging
+import inspect
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -25,6 +26,12 @@ from app.modules.recommendations.schemas import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+async def _resolve(value):
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 @router.post(
@@ -49,7 +56,7 @@ async def get_personalized_destinations(
         HTTPException: 500 if the engine or LLM path fails.
     """
     try:
-        return service.get_personalized_destinations(body)
+        return await _resolve(service.get_personalized_destinations(body))
     except Exception as e:
         logger.error("Error generating destination recommendations: %s", e)
         raise HTTPException(status_code=500, detail="Failed to generate destination recommendations")
@@ -77,7 +84,7 @@ async def get_contextual_activities(
         HTTPException: 500 on internal error.
     """
     try:
-        return service.get_contextual_activities(body)
+        return await _resolve(service.get_contextual_activities(body))
     except Exception as e:
         logger.error("Error generating contextual activities: %s", e)
         raise HTTPException(status_code=500, detail="Failed to generate contextual activities")
@@ -106,7 +113,7 @@ async def get_personalized_recommendations(
     """
     try:
         logger.info("Generating recommendations for user %s", request_data.user_id)
-        recommendations = service.generate_recommendations(request_data)
+        recommendations = await _resolve(service.generate_recommendations(request_data))
         logger.info("Generated %s recommendations", len(recommendations.recommendations))
         return recommendations
     except Exception as e:
@@ -138,7 +145,7 @@ async def get_popular_activities(
     """
     try:
         logger.info("Fetching popular activities")
-        activities = service.get_popular_activities(location, limit)
+        activities = await _resolve(service.get_popular_activities(location, limit))
         return {"location": location, "activities": activities, "total_results": len(activities)}
     except Exception as e:
         logger.error("Error fetching popular activities: %s", e)
@@ -169,7 +176,7 @@ async def get_trending_activities(
     """
     try:
         logger.info("Fetching trending activities for category: %s", category)
-        activities = service.get_trending_activities(category, limit)
+        activities = await _resolve(service.get_trending_activities(category, limit))
         return {"category": category, "activities": activities, "total_results": len(activities)}
     except Exception as e:
         logger.error("Error fetching trending activities: %s", e)
@@ -200,7 +207,7 @@ async def get_similar_activities(
     """
     try:
         logger.info("Fetching activities similar to %s", activity_id)
-        similar_activities = service.get_similar_activities(activity_id, limit)
+        similar_activities = await _resolve(service.get_similar_activities(activity_id, limit))
         return {
             "reference_activity_id": activity_id,
             "similar_activities": similar_activities,
@@ -244,7 +251,7 @@ async def submit_recommendation_feedback(
         if rating < 1 or rating > 5:
             raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
         logger.info("Recording feedback from user %s for activity %s", user_id, activity_id)
-        service.record_feedback(user_id, activity_id, rating, feedback_text)
+        await _resolve(service.record_feedback(user_id, activity_id, rating, feedback_text))
         return {
             "message": "Feedback recorded successfully",
             "user_id": user_id,
@@ -275,7 +282,7 @@ async def get_activity_categories(service: RecommendationServiceDep):
         HTTPException: 500 on internal error.
     """
     try:
-        categories = service.get_activity_categories()
+        categories = await _resolve(service.get_activity_categories())
         return {"categories": categories, "total_count": len(categories)}
     except Exception as e:
         logger.error("Error fetching categories: %s", e)

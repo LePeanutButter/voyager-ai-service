@@ -8,6 +8,7 @@ Dependencies:
 """
 
 import logging
+import inspect
 
 from fastapi import APIRouter, HTTPException
 
@@ -22,6 +23,12 @@ from app.modules.users.schemas import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 USER_PROFILE_NOT_FOUND = "User profile not found"
+
+
+async def _resolve(value):
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 @router.post(
@@ -50,7 +57,7 @@ async def create_user_profile(
     """
     try:
         logger.info("Creating profile for user %s", profile.user_id)
-        created_profile = service.create_user_profile(profile)
+        created_profile = await _resolve(service.create_user_profile(profile))
         logger.info("Successfully created profile for user %s", profile.user_id)
         return created_profile
     except ValueError as e:
@@ -84,7 +91,7 @@ async def get_user_profile(user_id: str, service: UserServiceDep):
     """
     try:
         logger.info("Fetching profile for user %s", user_id)
-        profile = service.get_user_profile(user_id)
+        profile = await _resolve(service.get_user_profile(user_id))
         if not profile:
             raise HTTPException(status_code=404, detail=USER_PROFILE_NOT_FOUND)
         return profile
@@ -124,7 +131,7 @@ async def update_user_profile(
     """
     try:
         logger.info("Updating profile for user %s", user_id)
-        updated_profile = service.update_user_profile(user_id, profile_update)
+        updated_profile = await _resolve(service.update_user_profile(user_id, profile_update))
         if not updated_profile:
             raise HTTPException(status_code=404, detail=USER_PROFILE_NOT_FOUND)
         logger.info("Successfully updated profile for user %s", user_id)
@@ -166,7 +173,7 @@ async def update_user_preferences(
     """
     try:
         logger.info("Updating preferences for user %s", user_id)
-        success = service.update_user_preferences(user_id, preferences)
+        success = await _resolve(service.update_user_preferences(user_id, preferences))
         if not success:
             raise HTTPException(status_code=404, detail=USER_PROFILE_NOT_FOUND)
         return {"message": "Preferences updated successfully", "user_id": user_id}
@@ -196,7 +203,7 @@ async def record_user_interaction(interaction: UserInteraction, service: UserSer
     """
     try:
         logger.info("Recording interaction for user %s", interaction.user_id)
-        service.record_interaction(interaction)
+        await _resolve(service.record_interaction(interaction))
         return {"message": "Interaction recorded successfully", "interaction_id": interaction.user_id}
     except Exception as e:
         logger.error("Error recording interaction: %s", e)
@@ -227,7 +234,7 @@ async def get_user_interaction_history(
     """
     try:
         logger.info("Fetching interaction history for user %s", user_id)
-        history = service.get_interaction_history(user_id, limit)
+        history = await _resolve(service.get_interaction_history(user_id, limit))
         return {"user_id": user_id, "interactions": history, "total_count": len(history)}
     except Exception as e:
         logger.error("Error fetching interaction history: %s", e)
@@ -256,7 +263,7 @@ async def get_user_insights(user_id: str, service: UserServiceDep):
     """
     try:
         logger.info("Generating user insights")
-        insights = service.generate_user_insights(user_id)
+        insights = await _resolve(service.generate_user_insights(user_id))
         if not insights:
             raise HTTPException(status_code=404, detail=USER_PROFILE_NOT_FOUND)
         return insights
@@ -289,7 +296,7 @@ async def delete_user_profile(user_id: str, service: UserServiceDep):
     """
     try:
         logger.info("Deleting profile for user %s", user_id)
-        success = service.delete_user_profile(user_id)
+        success = await _resolve(service.delete_user_profile(user_id))
         if not success:
             raise HTTPException(status_code=404, detail=USER_PROFILE_NOT_FOUND)
         return {"message": "User profile deleted successfully", "user_id": user_id}
