@@ -90,7 +90,7 @@ async def get_user_profile(user_id: str, service: UserServiceDep):
         HTTPException: 404 if missing; 500 on internal error.
     """
     try:
-        logger.info("Fetching profile for user %s", user_id)
+        logger.info("Fetching user profile")
         profile = await _resolve(service.get_user_profile(user_id))
         if not profile:
             raise HTTPException(status_code=404, detail=USER_PROFILE_NOT_FOUND)

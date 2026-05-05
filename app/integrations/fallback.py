@@ -21,6 +21,57 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _format_cost(s: "Suggestion", context: "TravelContext") -> str:
+    if not s.estimated_cost_usd or s.estimated_cost_usd <= 0:
+        return "(free)"
+    suffix = " per person" if context.group_size and context.group_size > 1 else ""
+    return f"(~${s.estimated_cost_usd:,.0f}{suffix})"
+
+
+def _parse_day_activity_name(name: str) -> Optional[tuple[str, str]]:
+    if not name.startswith("Day "):
+        return None
+    try:
+        day_num, act_name = name.split(":", 1)
+        return day_num.strip(), act_name.strip()
+    except ValueError:
+        return None
+
+
+def _group_activities_by_day(acts: List["Suggestion"]) -> tuple[dict[str, list[tuple[str, "Suggestion"]]], list["Suggestion"]]:
+    days_dict: dict[str, list[tuple[str, "Suggestion"]]] = {}
+    others: list["Suggestion"] = []
+    for suggestion in acts:
+        parsed = _parse_day_activity_name(suggestion.name)
+        if parsed is None:
+            others.append(suggestion)
+            continue
+        day_num, act_name = parsed
+        if day_num not in days_dict:
+            days_dict[day_num] = []
+        days_dict[day_num].append((act_name, suggestion))
+    return days_dict, others
+
+
+def _render_day_sections(
+    parts: list[str],
+    days_dict: dict[str, list[tuple[str, "Suggestion"]]],
+    context: "TravelContext",
+) -> None:
+    for day_num, day_acts in days_dict.items():
+        parts.append(f"\n{day_num}:")
+        for act_name, suggestion in day_acts:
+            parts.append(f"- {act_name} {_format_cost(suggestion, context)}")
+
+
+def _render_other_sections(parts: list[str], others: list["Suggestion"], context: "TravelContext") -> None:
+    if not others:
+        return
+    parts.append("")
+    for suggestion in others:
+        parts.append(f"- {suggestion.name} {_format_cost(suggestion, context)}")
+
+
 def _format_destinations(dests: List["Suggestion"]) -> str:
     """Formats the first destination suggestion as a highlighted block.
 
@@ -49,40 +100,10 @@ def _format_activities(acts: List["Suggestion"], context: "TravelContext") -> st
     if not acts:
         return ""
 
-    parts = []
-    days_dict = {}
-    others = []
-    for s in acts:
-        if s.name.startswith("Day "):
-            try:
-                day_num, act_name = s.name.split(":", 1)
-                day_num = day_num.strip()
-                act_name = act_name.strip()
-                if day_num not in days_dict:
-                    days_dict[day_num] = []
-                days_dict[day_num].append((act_name, s))
-            except ValueError:
-                others.append(s)
-        else:
-            others.append(s)
-
-    for day_num, day_acts in days_dict.items():
-        parts.append(f"\n{day_num}:")
-        for act_name, s in day_acts:
-            cost_str = "(free)"
-            if s.estimated_cost_usd and s.estimated_cost_usd > 0:
-                suffix = " per person" if context.group_size and context.group_size > 1 else ""
-                cost_str = f"(~${s.estimated_cost_usd:,.0f}{suffix})"
-            parts.append(f"- {act_name} {cost_str}")
-
-    if others:
-        parts.append("")
-        for s in others:
-            cost_str = "(free)"
-            if s.estimated_cost_usd and s.estimated_cost_usd > 0:
-                suffix = " per person" if context.group_size and context.group_size > 1 else ""
-                cost_str = f"(~${s.estimated_cost_usd:,.0f}{suffix})"
-            parts.append(f"- {s.name} {cost_str}")
+    parts: list[str] = []
+    days_dict, others = _group_activities_by_day(acts)
+    _render_day_sections(parts, days_dict, context)
+    _render_other_sections(parts, others, context)
 
     return "\n".join(parts)
 

@@ -206,7 +206,7 @@ async def get_similar_activities(
         HTTPException: 500 on internal error.
     """
     try:
-        logger.info("Fetching activities similar to %s", activity_id)
+        logger.info("Fetching similar activities")
         similar_activities = await _resolve(service.get_similar_activities(activity_id, limit))
         return {
             "reference_activity_id": activity_id,

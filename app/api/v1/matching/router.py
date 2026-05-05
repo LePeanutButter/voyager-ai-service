@@ -89,7 +89,7 @@ async def get_compatibility_score(
         HTTPException: 404 if a profile is missing; 500 on internal error.
     """
     try:
-        logger.info("Calculating compatibility between %s and %s", user_id, target_user_id)
+        logger.info("Calculating compatibility between users")
         compatibility = await _resolve(service.calculate_compatibility(user_id, target_user_id))
         if not compatibility:
             raise HTTPException(status_code=404, detail="One or both users not found")

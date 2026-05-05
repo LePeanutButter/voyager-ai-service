@@ -244,7 +244,7 @@ class UserService:
             Structured insights dict, or ``None`` if the profile is missing or on error.
         """
         try:
-            logger.info(f"Generating insights for user {user_id}")
+            logger.info("Generating user insights")
             
             # Get user profile
             profile = self.user_profiles.get(user_id)

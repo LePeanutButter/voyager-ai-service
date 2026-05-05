@@ -334,18 +334,25 @@ class ContextExtractor:
 
     def _extract_group_size_patterns(self, msg_lower: str) -> Optional[int]:
         for pattern, fixed in _GROUP_PATTERNS:
+            match = re.search(pattern, msg_lower)
+            if not match:
+                continue
             if fixed > 0:
-                if re.search(pattern, msg_lower):
-                    return fixed
-            elif fixed == 0:
-                match = re.search(pattern, msg_lower)
-                if match:
-                    try:
-                        val = int(match.group(1))
-                        if 1 <= val <= 50:
-                            return val
-                    except (ValueError, IndexError):
-                        continue
+                return fixed
+            if fixed == 0:
+                parsed = self._parse_group_size_match(match)
+                if parsed is not None:
+                    return parsed
+        return None
+
+    @staticmethod
+    def _parse_group_size_match(match: re.Match[str]) -> Optional[int]:
+        try:
+            value = int(match.group(1))
+        except (ValueError, IndexError):
+            return None
+        if 1 <= value <= 50:
+            return value
         return None
 
     def _extract_group_size(self, message: str) -> Optional[int]:

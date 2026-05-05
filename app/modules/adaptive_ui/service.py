@@ -92,6 +92,81 @@ class AdaptiveUIService:
     def __init__(self, behavior_service: BehaviorAnalysisService) -> None:
         self._behavior = behavior_service
 
+    @staticmethod
+    def _catalog_order(nav_id: str) -> int:
+        for entry in _NAV_CATALOG:
+            if entry["id"] == nav_id:
+                return entry["default_order"]
+        return 99
+
+    @staticmethod
+    def _nav_label(nav_id: str) -> str:
+        return next((entry["label"] for entry in _NAV_CATALOG if entry["id"] == nav_id), nav_id)
+
+    @staticmethod
+    def _interaction_weight(item: Dict[str, Any]) -> float:
+        interaction = item.get("interaction_type")
+        if interaction is None:
+            return 1.0
+        name = getattr(interaction, "value", str(interaction))
+        if name == "click":
+            return 2.0
+        if name == "view":
+            return 1.0
+        return 1.0
+
+    def _build_nav_counts(self, interactions: List[Dict[str, Any]]) -> Counter[str]:
+        nav_counts: Counter[str] = Counter()
+        for item in interactions:
+            ctx = item.get("context") or {}
+            nav_item_id = ctx.get("nav_item_id")
+            if isinstance(nav_item_id, str) and nav_item_id:
+                nav_counts[nav_item_id] += self._interaction_weight(item)
+        return nav_counts
+
+    @staticmethod
+    def _tier_for_nav(
+        nav_id: str,
+        count: float,
+        no_nav_signal: bool,
+        primary_len: int,
+        primary_cap: int,
+        top_count: float,
+        window: int,
+    ) -> tuple[NavItemTier, str]:
+        if no_nav_signal:
+            if primary_len < primary_cap:
+                return NavItemTier.PRIMARY, "Orden por defecto (sin datos de uso de menú en la ventana)."
+            return NavItemTier.SECONDARY, "Resto de entradas en menú secundario o “más”."
+        if count == 0:
+            reason = (
+                f"Sin accesos en los últimos {window} días; "
+                "mostrar en menú secundario o “más”."
+            )
+            return NavItemTier.SECONDARY, reason
+        if primary_len < primary_cap:
+            if nav_id == "matching" and top_count > 0 and count >= top_count * 0.25:
+                return NavItemTier.PRIMARY, "Uso frecuente de Matching — prioridad en barra principal."
+            return NavItemTier.PRIMARY, "Priorizado por frecuencia de uso en la ventana."
+        return NavItemTier.SECONDARY, "Fuera del top de slots primarios; agrupar en secundario."
+
+    @staticmethod
+    def _assign_sort_indexes(items: List[MenuNavItem]) -> None:
+        for idx, item in enumerate(items):
+            item.sort_index = idx
+
+    @staticmethod
+    def _menu_summary(interactions: List[Dict[str, Any]]) -> str:
+        if not interactions:
+            return (
+                "Sin interacciones recientes; orden por defecto. "
+                "Enviar `context.nav_item_id` en POST /behavior-analysis/track."
+            )
+        return (
+            "Menú adaptado por `nav_item_id` en el contexto de tracking. "
+            "Sin datos: orden por defecto y todo en primarios hasta límite de slots."
+        )
+
     def _interactions_in_window(
         self, user_id: str, days: int
     ) -> List[Dict[str, Any]]:
@@ -121,75 +196,31 @@ class AdaptiveUIService:
         """
         window = settings.ADAPTIVE_UI_ANALYSIS_WINDOW_DAYS
         interactions = self._interactions_in_window(user_id, window)
-
-        nav_counts: Counter[str] = Counter()
-        for item in interactions:
-            ctx = item.get("context") or {}
-            nid = ctx.get("nav_item_id")
-            if isinstance(nid, str) and nid:
-                w = 1.0
-                it = item.get("interaction_type")
-                if it is not None:
-                    name = getattr(it, "value", str(it))
-                    if name == "click":
-                        w = 2.0
-                    elif name == "view":
-                        w = 1.0
-                nav_counts[nid] += w
+        nav_counts = self._build_nav_counts(interactions)
 
         max_count = max(nav_counts.values(), default=0)
-
-        # Sort: usage descending first; ties by catalog default_order
-        def catalog_order(nav_id: str) -> int:
-            for e in _NAV_CATALOG:
-                if e["id"] == nav_id:
-                    return e["default_order"]
-            return 99
-
         scored_ids = [e["id"] for e in _NAV_CATALOG]
-        scored_ids.sort(
-            key=lambda x: (-nav_counts.get(x, 0), catalog_order(x))
-        )
+        scored_ids.sort(key=lambda x: (-nav_counts.get(x, 0), self._catalog_order(x)))
 
         primary_cap = settings.ADAPTIVE_UI_PRIMARY_NAV_SLOTS
         primary: List[MenuNavItem] = []
         secondary: List[MenuNavItem] = []
-        # No navigation signals: default bar (first catalog slots)
         no_nav_signal = max_count == 0
+        top_count = max_count
 
         for nav_id in scored_ids:
-            label = next(
-                (e["label"] for e in _NAV_CATALOG if e["id"] == nav_id), nav_id
-            )
+            label = self._nav_label(nav_id)
             count = nav_counts.get(nav_id, 0)
             usage_score = float(count / max_count) if max_count > 0 else 0.0
-
-            if no_nav_signal:
-                if len(primary) < primary_cap:
-                    tier = NavItemTier.PRIMARY
-                    reason = "Orden por defecto (sin datos de uso de menú en la ventana)."
-                else:
-                    tier = NavItemTier.SECONDARY
-                    reason = "Resto de entradas en menú secundario o “más”."
-            # No use in window → secondary / grouped (PBI 32)
-            elif count == 0:
-                tier = NavItemTier.SECONDARY
-                reason = (
-                    f"Sin accesos en los últimos {window} días; "
-                    "mostrar en menú secundario o “más”."
-                )
-            elif len(primary) < primary_cap:
-                tier = NavItemTier.PRIMARY
-                top_count = max(nav_counts.values()) if nav_counts else 0
-                if nav_id == "matching" and top_count > 0 and count >= top_count * 0.25:
-                    reason = (
-                        "Uso frecuente de Matching — prioridad en barra principal."
-                    )
-                else:
-                    reason = "Priorizado por frecuencia de uso en la ventana."
-            else:
-                tier = NavItemTier.SECONDARY
-                reason = "Fuera del top de slots primarios; agrupar en secundario."
+            tier, reason = self._tier_for_nav(
+                nav_id=nav_id,
+                count=count,
+                no_nav_signal=no_nav_signal,
+                primary_len=len(primary),
+                primary_cap=primary_cap,
+                top_count=top_count,
+                window=window,
+            )
 
             entry = MenuNavItem(
                 nav_item_id=nav_id,
@@ -204,21 +235,9 @@ class AdaptiveUIService:
             else:
                 secondary.append(entry)
 
-        # Reassign sequential sort_index
-        for i, p in enumerate(primary):
-            p.sort_index = i
-        for i, s in enumerate(secondary):
-            s.sort_index = i
-
-        summary = (
-            "Menú adaptado por `nav_item_id` en el contexto de tracking. "
-            "Sin datos: orden por defecto y todo en primarios hasta límite de slots."
-        )
-        if not interactions:
-            summary = (
-                "Sin interacciones recientes; orden por defecto. "
-                "Enviar `context.nav_item_id` en POST /behavior-analysis/track."
-            )
+        self._assign_sort_indexes(primary)
+        self._assign_sort_indexes(secondary)
+        summary = self._menu_summary(interactions)
 
         return MenuAdaptationResponse(
             user_id=user_id,
@@ -242,28 +261,37 @@ class AdaptiveUIService:
         """
         weights: Dict[str, float] = defaultdict(float)
         for item in interactions:
-            cat = item.get("activity_category")
-            if cat:
-                theme = _CATEGORY_TO_THEME.get(str(cat).lower(), None)
-                if theme:
-                    w = 1.0
-                    it = item.get("interaction_type")
-                    name = getattr(it, "value", str(it)) if it is not None else ""
-                    if name in ("bookmark", "book", "rate"):
-                        w = 1.5
-                    elif name == "click":
-                        w = 1.2
-                    elif name == "view":
-                        w = 0.8
-                    weights[theme] += w
-
-            ctx = item.get("context") or {}
-            for pref in TravelPreference:
-                key = f"interest_{pref.value}"
-                if ctx.get(key) or ctx.get("theme") == pref.value:
-                    weights[pref.value] += 1.0
+            self._add_category_weight(weights, item)
+            self._add_context_weights(weights, item.get("context") or {})
 
         return dict(weights)
+
+    @staticmethod
+    def _theme_weight_for_interaction(interaction: Any) -> float:
+        name = getattr(interaction, "value", str(interaction)) if interaction is not None else ""
+        if name in ("bookmark", "book", "rate"):
+            return 1.5
+        if name == "click":
+            return 1.2
+        if name == "view":
+            return 0.8
+        return 1.0
+
+    def _add_category_weight(self, weights: Dict[str, float], item: Dict[str, Any]) -> None:
+        category = item.get("activity_category")
+        if not category:
+            return
+        theme = _CATEGORY_TO_THEME.get(str(category).lower())
+        if not theme:
+            return
+        weights[theme] += self._theme_weight_for_interaction(item.get("interaction_type"))
+
+    @staticmethod
+    def _add_context_weights(weights: Dict[str, float], context: Dict[str, Any]) -> None:
+        for pref in TravelPreference:
+            key = f"interest_{pref.value}"
+            if context.get(key) or context.get("theme") == pref.value:
+                weights[pref.value] += 1.0
 
     def build_home_feed_layout(self, user_id: str) -> HomeFeedLayoutResponse:
         """Composes home sections and weights for thematic recommendations.
