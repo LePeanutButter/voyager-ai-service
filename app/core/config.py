@@ -99,6 +99,18 @@ class Settings(BaseSettings):
     ADAPTIVE_UI_THEME_BOOST_DELTA: float = 0.12
 
     # -----------------------------------------------------------------------
+    # Seasonality (digital-transformation.tex: SARIMA s=12, mitigación, visibilidad)
+    # -----------------------------------------------------------------------
+    SEASONALITY_HISTORY_MONTHS: int = 36
+    SEASONALITY_AMPLITUDE: float = 0.38
+    SEASONALITY_MITIGATION_STRENGTH: float = 0.22
+    SEASONALITY_PEAK_THRESHOLD: float = 1.12
+    SEASONALITY_OFFPEAK_THRESHOLD: float = 0.88
+    SEASONALITY_PEAK_DAMP_CAP: float = 0.45
+    SEASONALITY_MULT_MIN: float = 0.82
+    SEASONALITY_MULT_MAX: float = 1.18
+
+    # -----------------------------------------------------------------------
     # LLM Integration settings
     # LLM_PROVIDER: "openai" | "openai_compatible" | "ollama" | "none"
     # Set to "none" (default) to run in rule-based fallback mode only.

@@ -1,0 +1,1 @@
+"""Seasonality API package."""

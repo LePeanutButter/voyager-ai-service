@@ -8,6 +8,7 @@ from app.modules.recommendations.schemas import (
     RecommendationRequest,
 )
 from app.modules.recommendations.service import RecommendationService
+from app.modules.seasonality.service import SeasonalityService
 from app.modules.trends.service import TrendsService
 
 
@@ -42,6 +43,38 @@ async def test_get_personalized_destinations_with_trends(mock_mm):
     req = DestinationRecommendationRequest(user_id="u1", max_results=6, include_emerging_trends=True)
     out = svc.get_personalized_destinations(req)
     assert out.destinations
+
+
+@pytest.mark.asyncio
+async def test_get_personalized_destinations_with_seasonality(mock_mm):
+    sea = SeasonalityService()
+    svc = RecommendationService(mock_mm, trends_service=None, seasonality_service=sea)
+    req = DestinationRecommendationRequest(
+        user_id="u1",
+        max_results=5,
+        include_emerging_trends=False,
+        travel_month=11,
+        apply_seasonality_mitigation=True,
+    )
+    out = svc.get_personalized_destinations(req)
+    assert out.destinations
+    assert out.seasonality_note
+    assert any(d.seasonal_context is not None for d in out.destinations)
+
+
+@pytest.mark.asyncio
+async def test_get_personalized_destinations_seasonality_disabled(mock_mm):
+    sea = SeasonalityService()
+    svc = RecommendationService(mock_mm, trends_service=None, seasonality_service=sea)
+    req = DestinationRecommendationRequest(
+        user_id="u1",
+        max_results=4,
+        include_emerging_trends=False,
+        apply_seasonality_mitigation=False,
+    )
+    out = svc.get_personalized_destinations(req)
+    assert not out.seasonality_note
+    assert all(d.seasonal_context is None for d in out.destinations)
 
 
 @pytest.mark.asyncio

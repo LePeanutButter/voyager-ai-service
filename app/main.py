@@ -28,6 +28,7 @@ from app.modules.behavior.service import BehaviorAnalysisService
 from app.modules.matching.service import MatchingService
 from app.modules.preferences.service import PreferenceQuestionnaireService
 from app.modules.recommendations.service import RecommendationService
+from app.modules.seasonality.service import SeasonalityService
 from app.modules.trends.service import TrendsService
 from app.modules.users.service import UserService
 
@@ -73,9 +74,13 @@ async def lifespan(app: FastAPI):
 
     app.state.user_service = UserService(model_manager)
     app.state.matching_service = MatchingService(model_manager, app.state.matching_learning)
+
+    seasonality_service = SeasonalityService()
+    app.state.seasonality_service = seasonality_service
     app.state.recommendation_service = RecommendationService(
         model_manager,
         trends_service=trends_service,
+        seasonality_service=seasonality_service,
     )
 
     chat_service = ChatService()

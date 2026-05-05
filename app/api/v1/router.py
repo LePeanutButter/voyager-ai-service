@@ -2,7 +2,7 @@
 
 Responsibilities:
     Mount a single `APIRouter` with sub-routers per domain (recommendations,
-    users, matching, trends, chat, preferences, behavior, adaptive UI).
+    users, matching, trends, seasonality, chat, preferences, behavior, adaptive UI).
 
 Dependencies:
     `APIRouter` definitions and `app.api.v1.*.router` submodules.
@@ -16,6 +16,7 @@ from app.api.v1.chat.router import router as chat_router
 from app.api.v1.matching.router import router as matching_router
 from app.api.v1.preferences.router import router as preferences_router
 from app.api.v1.recommendations.router import router as recommendations_router
+from app.api.v1.seasonality.router import router as seasonality_router
 from app.api.v1.trends.router import router as trends_router
 from app.api.v1.users.router import router as users_router
 
@@ -29,6 +30,11 @@ api_v1_router.include_router(
 api_v1_router.include_router(users_router, prefix="/users", tags=["users"])
 api_v1_router.include_router(matching_router, prefix="/matching", tags=["matching"])
 api_v1_router.include_router(trends_router, prefix="/trends", tags=["trends"])
+api_v1_router.include_router(
+    seasonality_router,
+    prefix="/seasonality",
+    tags=["seasonality"],
+)
 api_v1_router.include_router(chat_router, prefix="/chat", tags=["chat"])
 api_v1_router.include_router(
     preferences_router,
