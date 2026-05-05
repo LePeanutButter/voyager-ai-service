@@ -1,6 +1,7 @@
 import pytest
 
 from app.ml.model_loader import (
+    BaseModel,
     ModelManager,
     RecommendationModel,
     TravelerMatchingModel,
@@ -56,3 +57,54 @@ async def test_traveler_model(tmp_path):
         }
     )
     assert "compatibility_score" in out
+
+
+@pytest.mark.asyncio
+async def test_models_raise_when_not_loaded(tmp_path):
+    rec = RecommendationModel(str(tmp_path / "r.pkl"))
+    usr = UserProfilingModel(str(tmp_path / "u.pkl"))
+    mat = TravelerMatchingModel(str(tmp_path / "m.pkl"))
+
+    with pytest.raises(RuntimeError):
+        await rec.predict({})
+    with pytest.raises(RuntimeError):
+        await usr.predict({})
+    with pytest.raises(RuntimeError):
+        await mat.predict({})
+
+    assert await rec.validate_model() is False
+    assert await usr.validate_model() is False
+    assert await mat.validate_model() is False
+
+
+@pytest.mark.asyncio
+async def test_model_manager_validate_handles_exception(monkeypatch):
+    mm = ModelManager()
+    await mm.load_models()
+    model = mm.get_model("recommendation_model")
+    assert model is not None
+
+    async def boom():
+        raise RuntimeError("validation crash")
+
+    monkeypatch.setattr(model, "validate_model", boom)
+    out = await mm.validate_all_models()
+    assert out["recommendation_model"] is False
+
+
+@pytest.mark.asyncio
+async def test_model_manager_reload_failure(monkeypatch):
+    mm = ModelManager()
+    await mm.load_models()
+    model = mm.get_model("recommendation_model")
+    assert model is not None
+
+    async def fail_load():
+        return False
+
+    monkeypatch.setattr(model, "load_model", fail_load)
+    assert await mm.reload_model("recommendation_model") is False
+
+
+def test_base_model_interface_exposed():
+    assert BaseModel.__abstractmethods__

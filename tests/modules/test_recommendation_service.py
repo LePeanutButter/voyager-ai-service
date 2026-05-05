@@ -102,6 +102,45 @@ async def test_record_feedback(rec_svc: RecommendationService):
 
 
 @pytest.mark.asyncio
+async def test_get_similar_activities_with_reference(monkeypatch, rec_svc: RecommendationService):
+    source = rec_svc._generate_mock_activities("seed", 1)[0]
+    source.activity_id = "known-id"
+
+    monkeypatch.setattr(rec_svc, "_get_activity_by_id", lambda _id: source)
+    sim = rec_svc.get_similar_activities("known-id", 3)
+    assert len(sim) <= 3
+
+
+@pytest.mark.asyncio
+async def test_get_contextual_activities_good_weather_note(rec_svc: RecommendationService):
+    req = ContextualActivityRequest(
+        user_id="u1",
+        latitude=41.0,
+        longitude=2.0,
+        weather=WeatherCondition.CLEAR,
+        max_results=4,
+    )
+    out = rec_svc.get_contextual_activities(req)
+    assert "Condiciones favorables" in out.context_adjustment
+
+
+@pytest.mark.asyncio
+async def test_generate_recommendations_uses_budget_and_group(mock_mm):
+    svc = RecommendationService(mock_mm)
+    from app.modules.common.schemas.base import Location
+
+    req = RecommendationRequest(
+        user_id="u2",
+        location=Location(latitude=20, longitude=30, city="Y"),
+        max_results=5,
+        budget_limit=250,
+        group_size=3,
+    )
+    out = svc.generate_recommendations(req)
+    assert out.total_results <= 5
+
+
+@pytest.mark.asyncio
 async def test_generate_raises_propagates(mock_mm, monkeypatch):
     svc = RecommendationService(mock_mm)
 

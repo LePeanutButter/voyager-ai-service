@@ -4,9 +4,6 @@ relative_files = true
 branch = true
 omit =
     app/__init__.py
-    app/ml/model_loader.py
-    app/modules/adaptive_ui/service.py
-    app/modules/recommendations/service.py
 
 [report]
 exclude_lines =
