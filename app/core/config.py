@@ -16,6 +16,12 @@ from urllib.parse import quote_plus
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
+# Origen browser típico cuando el front resuelve el DNS público de la instancia EC2
+# (p. ej. Learner Lab). No coincide con IP literal ni con otros dominios.
+_EC2_COMPUTE_PUBLIC_DNS_ORIGIN_REGEX = (
+    r"^https?://ec2-(?:\d{1,3}-){3}\d{1,3}\.[a-z0-9.-]+\.amazonaws\.com(?::\d+)?$"
+)
+
 
 class Settings(BaseSettings):
     """Application parameters loaded from environment variables and `.env`.
@@ -40,7 +46,24 @@ class Settings(BaseSettings):
 
     # API configuration
     API_V1_STR: str = "/api/v1"
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8080", "http://localhost:5173"]
+    # CORS: lista explícita. En env puedes usar CSV: http://localhost:3000,http://1.2.3.4:5173
+    ALLOWED_ORIGINS: List[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://localhost:8080",
+            "http://localhost:5173",
+        ],
+    )
+    # Regex adicional (sin usar *). Útil para patrones de laboratorio (p. ej. Vocareum).
+    CORS_ALLOW_ORIGIN_REGEX: str = Field(
+        default="",
+        description="Regex de origen permitido además de ALLOWED_ORIGINS. Vacío = desactivado.",
+    )
+    # Learner Lab / EC2: permite solo hostnames ec2-*.…amazonaws.com (no IP suelta ni *).
+    CORS_ALLOW_EC2_COMPUTE_DNS: bool = Field(
+        default=False,
+        description="Activa regex acotada a DNS público compute.amazonaws.com típico de EC2.",
+    )
 
     # Database: SQLite by default; set DB_HOST + DB_USERNAME + DB_PASSWORD for PostgreSQL
     # (local o RDS), alineado con voyager-backend-core (variables separadas + ssl opcional).
@@ -130,6 +153,15 @@ class Settings(BaseSettings):
     # Maximum suggestions returned per chat turn
     CHAT_MAX_SUGGESTIONS: int = 5
 
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def _parse_allowed_origins(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
+
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def _empty_db_url_as_none(cls, v: Optional[str]) -> Optional[str]:
@@ -162,6 +194,19 @@ class Settings(BaseSettings):
         """URL efectiva tras validadores (siempre definida)."""
         assert self.DATABASE_URL is not None
         return self.DATABASE_URL
+
+    @property
+    def resolved_cors_origin_regex(self) -> Optional[str]:
+        """Patrón único o alternancia para CORSMiddleware.allow_origin_regex."""
+        parts: List[str] = []
+        if self.CORS_ALLOW_EC2_COMPUTE_DNS:
+            parts.append(_EC2_COMPUTE_PUBLIC_DNS_ORIGIN_REGEX)
+        custom = (self.CORS_ALLOW_ORIGIN_REGEX or "").strip()
+        if custom:
+            parts.append(f"({custom})")
+        if not parts:
+            return None
+        return "|".join(parts) if len(parts) > 1 else parts[0]
 
     class Config:
         env_file = ".env"

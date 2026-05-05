@@ -105,13 +105,16 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_cors_kwargs = {
+    "allow_origins": settings.ALLOWED_ORIGINS,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+_cors_regex = settings.resolved_cors_origin_regex
+if _cors_regex:
+    _cors_kwargs["allow_origin_regex"] = _cors_regex
+app.add_middleware(CORSMiddleware, **_cors_kwargs)
 
 app.include_router(api_v1_router, prefix="/api/v1")
 
