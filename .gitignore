@@ -170,7 +170,6 @@ tensorboard_logs/
 *.log
 
 # Model artifacts
-models/
 checkpoints/
 artifacts/
 outputs/
