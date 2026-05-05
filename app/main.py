@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from app.core.config import settings
-from app.routes import recommendations, users, matching
+from app.routes import recommendations, users, matching, behavior_analysis
 from app.ml.model_loader import ModelManager
 from app.chat.router import router as chat_router
 from app.chat.service import ChatService
@@ -106,6 +106,12 @@ app.include_router(
     travel_preferences_router,
     prefix="/api/v1/travel-preferences",
     tags=["travel-preferences"],
+)
+
+app.include_router(
+    behavior_analysis.router,
+    prefix="/api/v1/behavior-analysis",
+    tags=["behavior-analysis"],
 )
 
 
