@@ -10,6 +10,7 @@ Dependencies:
 """
 
 from contextlib import asynccontextmanager
+import asyncio
 import logging
 import os
 
@@ -19,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_v1_router
 from app.modules.chat.service import ChatService
 from app.core.config import settings
+from app.db.database import check_db_connection
 from app.ml.model_loader import ModelManager
 from app.ml.learning_store import MatchingLearningStore
 from app.modules.adaptive_ui.service import AdaptiveUIService
@@ -47,6 +49,13 @@ async def lifespan(app: FastAPI):
         Control to the FastAPI runtime between startup and shutdown.
     """
     logger.info("Starting Tourism Assistant microservice...")
+
+    try:
+        await asyncio.to_thread(check_db_connection)
+        logger.info("Database connectivity OK")
+    except Exception as e:
+        logger.error("Database check failed: %s", e)
+        raise
 
     model_manager = ModelManager()
     await model_manager.load_models()
@@ -139,8 +148,22 @@ async def health_check():
         models_loaded = (
             model_manager is not None and model_manager.is_ready() if model_manager else False
         )
+        try:
+            await asyncio.to_thread(check_db_connection)
+        except Exception as db_err:
+            logger.warning("Health: database check failed: %s", db_err)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "status": "unhealthy",
+                    "database": "error",
+                    "models_loaded": models_loaded,
+                    "service": "tourism-assistant",
+                },
+            )
         return {
             "status": "healthy",
+            "database": "ok",
             "models_loaded": models_loaded,
             "service": "tourism-assistant",
         }

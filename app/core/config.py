@@ -8,9 +8,13 @@ Dependencies:
     `pydantic_settings.BaseSettings`, optional `.env` file.
 """
 
+from __future__ import annotations
+
+from typing import List, Optional
+from urllib.parse import quote_plus
+
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
-from typing import List
-import os
 
 
 class Settings(BaseSettings):
@@ -38,8 +42,19 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8080", "http://localhost:5173"]
 
-    # Database configuration (placeholder for future integration)
-    DATABASE_URL: str = "sqlite:///./tourism_assistant.db"
+    # Database: SQLite by default; set DB_HOST + DB_USERNAME + DB_PASSWORD for PostgreSQL
+    # (local o RDS), alineado con voyager-backend-core (variables separadas + ssl opcional).
+    DATABASE_URL: Optional[str] = Field(
+        default=None,
+        description="SQLAlchemy URL. Si no se define, se construye desde DB_* o se usa SQLite.",
+    )
+    DB_HOST: str = ""
+    DB_PORT: int = 5432
+    DB_NAME: str = "tourism_ai"
+    DB_USERNAME: str = ""
+    DB_PASSWORD: str = ""
+    # RDS: usar "require" igual que JDBC ?sslmode=require en Spring.
+    DB_SSLMODE: str = ""
 
     # ML Model configuration
     MODEL_PATH: str = "./app/ml/models"
@@ -102,6 +117,39 @@ class Settings(BaseSettings):
     CHAT_MAX_HISTORY: int = 20
     # Maximum suggestions returned per chat turn
     CHAT_MAX_SUGGESTIONS: int = 5
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def _empty_db_url_as_none(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v
+
+    @model_validator(mode="after")
+    def _assemble_database_url(self) -> Settings:
+        if self.DATABASE_URL:
+            return self
+        if self.DB_HOST and self.DB_USERNAME and self.DB_PASSWORD:
+            user = quote_plus(self.DB_USERNAME)
+            pwd = quote_plus(self.DB_PASSWORD)
+            ssl_q = f"?sslmode={self.DB_SSLMODE}" if (self.DB_SSLMODE or "").strip() else ""
+            object.__setattr__(
+                self,
+                "DATABASE_URL",
+                (
+                    f"postgresql+psycopg2://{user}:{pwd}@{self.DB_HOST}:{self.DB_PORT}/"
+                    f"{self.DB_NAME}{ssl_q}"
+                ),
+            )
+        else:
+            object.__setattr__(self, "DATABASE_URL", "sqlite:///./tourism_assistant.db")
+        return self
+
+    @property
+    def resolved_database_url(self) -> str:
+        """URL efectiva tras validadores (siempre definida)."""
+        assert self.DATABASE_URL is not None
+        return self.DATABASE_URL
 
     class Config:
         env_file = ".env"
