@@ -17,10 +17,12 @@ from contextlib import asynccontextmanager
 import logging
 
 from app.core.config import settings
-from app.routes import recommendations, users, matching
+from app.routes import recommendations, users, matching, behavior_analysis
 from app.ml.model_loader import ModelManager
 from app.chat.router import router as chat_router
 from app.chat.service import ChatService
+from app.preferences.router import router as travel_preferences_router
+from app.preferences.service import PreferenceQuestionnaireService
 
 
 # Configure logging
@@ -43,6 +45,10 @@ async def lifespan(app: FastAPI):
     chat_service = ChatService()
     app.state.chat_service = chat_service
     logger.info("ChatService initialised (LLM provider: %s)", settings.LLM_PROVIDER)
+
+    preference_questionnaire_service = PreferenceQuestionnaireService()
+    app.state.preference_questionnaire_service = preference_questionnaire_service
+    logger.info("PreferenceQuestionnaireService initialised")
     
     logger.info("Service startup completed successfully")
     yield
@@ -94,6 +100,18 @@ app.include_router(
     chat_router,
     prefix="/api/v1/chat",
     tags=["chat"]
+)
+
+app.include_router(
+    travel_preferences_router,
+    prefix="/api/v1/travel-preferences",
+    tags=["travel-preferences"],
+)
+
+app.include_router(
+    behavior_analysis.router,
+    prefix="/api/v1/behavior-analysis",
+    tags=["behavior-analysis"],
 )
 
 

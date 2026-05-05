@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     
     # API configuration
     API_V1_STR: str = "/api/v1"
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8080"]
+    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8080", "http://localhost:5173"]
     
     # Database configuration (placeholder for future integration)
     DATABASE_URL: str = "sqlite:///./tourism_assistant.db"
