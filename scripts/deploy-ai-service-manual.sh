@@ -5,7 +5,7 @@ set -euo pipefail
 # Requires local AWS CLI auth already active (temporary credentials).
 #
 # Usage:
-#   ./scripts/deploy-ai-service-manual.sh /path/to/ai-service.tar.gz /path/to/smarttrip-key.pem
+#   ./scripts/deploy-ai-service-manual.sh /path/to/ai-service-api.tar.gz /path/to/smarttrip-key.pem
 
 PACKAGE_PATH="${1:-}"
 KEY_PATH="${2:-}"
@@ -16,7 +16,7 @@ SSH_USER="${SSH_USER:-ec2-user}"
 AI_APP_DIR="${AI_APP_DIR:-/opt/smarttrip/ai-service}"
 
 if [[ -z "${PACKAGE_PATH}" || -z "${KEY_PATH}" ]]; then
-  echo "Usage: $0 <ai-package-tar-gz-path> <ssh-key-path>"
+  echo "Usage: $0 <ai-service-api.tar.gz-path> <ssh-key-path>"
   exit 1
 fi
 
@@ -58,13 +58,13 @@ ssh-keyscan -H ${IPS} >> ~/.ssh/known_hosts 2>/dev/null || true
 
 for IP in ${IPS}; do
   echo "Deploying AI service artifact to ${IP}"
-  scp -i "${KEY_PATH}" -o StrictHostKeyChecking=yes "${PACKAGE_PATH}" "${SSH_USER}@${IP}:/tmp/ai-service.tar.gz"
+  scp -i "${KEY_PATH}" -o StrictHostKeyChecking=yes "${PACKAGE_PATH}" "${SSH_USER}@${IP}:/tmp/ai-service-api.tar.gz"
 
   ssh -i "${KEY_PATH}" -o StrictHostKeyChecking=yes "${SSH_USER}@${IP}" << EOF
 set -e
 mkdir -p "${AI_APP_DIR}"
 cd "${AI_APP_DIR}"
-tar -xzf /tmp/ai-service.tar.gz
+tar -xzf /tmp/ai-service-api.tar.gz
 
 if [ ! -d ".venv" ]; then
   python3 -m venv .venv

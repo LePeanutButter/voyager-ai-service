@@ -1,41 +1,34 @@
 # ===========================================
-# GitHub Actions Workflow: CI Build & Deploy
-# Environment: Development
-# Description:
-#   - Installs dependencies and runs optional unit tests for AI service
-#   - Performs Trivy security scan and SonarCloud static analysis
-#   - Packages AI service artifact for manual Learner Lab deployment
-#   - Runs on every push to 'development'
+# CI — AI Service (push a development)
+# - Trivy + SonarCloud (ORGANIZATION_KEY, PROJECT_KEY, SONAR_TOKEN)
+# - Artefactos API + ml-models (Learner Lab: sin push a S3 desde CI; subes tú el tarball a S3 si aplica)
 # ===========================================
 
 name: CI Build & Deploy (AI Service - Development Push)
 
-# -------------------------------------------
-# Trigger: Run workflow on push to 'development' branch
-# -------------------------------------------
 on:
   push:
     branches:
       - development
   workflow_dispatch:
 
-# -------------------------------------------
-# Jobs Definition
-# -------------------------------------------
 jobs:
-  # =========================================
-  # Job: Security Scan (Trivy)
-  # Purpose: Scan filesystem and dependencies for vulnerabilities
-  # =========================================
   trivy_scan:
     name: Run Trivy Security Scan
     runs-on: ubuntu-latest
     steps:
-      # Step 1: Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2: Run Trivy filesystem scan
+      - name: Install Trivy
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y wget apt-transport-https gnupg
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update -qq
+          sudo apt-get install -y trivy
+
       - name: Run Trivy FS Scan
         uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
         with:
@@ -44,68 +37,60 @@ jobs:
           format: 'table'
           severity: 'HIGH,CRITICAL'
           exit-code: '1'
+          skip-setup-trivy: 'true'
 
-  # =========================================
-  # Job: SonarCloud Scan
-  # Purpose: Run static code analysis with SonarCloud
-  # =========================================
   sonar_scan:
     name: SonarCloud Analysis (Python)
     needs: trivy_scan
     runs-on: ubuntu-latest
     steps:
-      # Step 1: Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Step 2: Setup Python
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # Step 3: Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Step 4: Run SonarCloud scan
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@v2
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: >
+            -Dsonar.organization=${{ secrets.ORGANIZATION_KEY }}
+            -Dsonar.projectKey=${{ secrets.PROJECT_KEY }}
+            -Dsonar.scm.disabled=true
+            -Dsonar.branch.name=development
+            -Dsonar.branch.target=main
 
-  # =========================================
-  # Job: Build & Test Stage
-  # Purpose: Build and package AI service
-  # =========================================
   build_and_test:
     name: Build & Test (Python)
     needs: sonar_scan
     runs-on: ubuntu-latest
     steps:
-      # Step 1: Checkout source code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2: Setup Python
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # Step 3: Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest
 
-      # Step 4: Run unit tests
       - name: Run unit tests
         run: |
           if [ -d "tests" ]; then
@@ -114,41 +99,69 @@ jobs:
             echo "No tests directory found, skipping tests."
           fi
 
-      # Step 5: Package AI service
-      - name: Package AI service
+      - name: Package API (sin pesos en app/ml/models)
         run: |
           mkdir -p release
-          tar -czf release/ai-service.tar.gz app requirements.txt
+          STAGE=$(mktemp -d)
+          cp -r app "${STAGE}/"
+          rm -rf "${STAGE}/app/ml/models"
+          mkdir -p "${STAGE}/app/ml/models"
+          cp requirements.txt Dockerfile "${STAGE}/"
+          tar -czf release/ai-service-api.tar.gz -C "${STAGE}" .
+          rm -rf "${STAGE}"
 
-      # Step 6: Upload artifact
-      - name: Upload AI service artifact
+      - name: Package ML models bundle
+        run: |
+          mkdir -p release
+          if [ -d app/ml/models ] && [ -n "$(find app/ml/models -type f 2>/dev/null | head -1)" ]; then
+            tar -czf release/ml-models.tar.gz -C app/ml models
+          else
+            mkdir -p release/ml-models-placeholder
+            printf '%s\n' '{"note":"Sin binarios en repo; sustituir con artefactos de entrenamiento o sync desde S3."}' > release/ml-models-placeholder/manifest.json
+            tar -czf release/ml-models.tar.gz -C release ml-models-placeholder
+          fi
+
+      - name: Upload API artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ai-service-package
-          path: release/ai-service.tar.gz
+          name: ai-service-api
+          path: release/ai-service-api.tar.gz
 
-  # =========================================
-  # Job: Deploy Stage (Manual)
-  # Purpose: Manual Learner Lab deployment handoff
-  # =========================================
+      - name: Upload ML bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-service-ml-models
+          path: release/ml-models.tar.gz
+
   deploy:
     if: github.event_name == 'push'
     name: Deploy Handoff (Manual Learner Lab)
     needs: build_and_test
     runs-on: ubuntu-latest
     steps:
-      # Step 1: Download build artifact
-      - name: Download AI service artifact
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Make deploy script executable
+        run: chmod +x scripts/deploy-ai-service-manual.sh
+
+      - name: Download API artifact
         uses: actions/download-artifact@v4
         with:
-          name: ai-service-package
+          name: ai-service-api
           path: release
 
-      # Step 2: Upload manual deployment package
+      - name: Download ML models artifact (subida S3 manual en Learner Lab)
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-service-ml-models
+          path: release
+
       - name: Upload manual deployment package
         uses: actions/upload-artifact@v4
         with:
           name: ai-service-manual-deploy
           path: |
-            release/ai-service.tar.gz
+            release/ai-service-api.tar.gz
+            release/ml-models.tar.gz
             scripts/deploy-ai-service-manual.sh

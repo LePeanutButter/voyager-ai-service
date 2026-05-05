@@ -1,275 +1,181 @@
-# ARCHITECTURE.md
-SYSTEM TEMPLATE FOR RAPID CODEBASE COMPREHENSION - HAVE YOUR AGENT TO FILL IN FOR YOUR REPO
+# SMARTRIP - System architecture
 
-# Architecture Overview
-This document serves as a critical, living template designed to equip agents with a rapid and comprehensive understanding of the codebase's architecture, enabling efficient navigation and effective contribution from day one. Update this document as the codebase evolves.
+**Brand:** SMARTRIP
 
 ---
 
-## 1. Project Structure
+This document describes the **end-to-end system**: client applications, the **Spring Boot** core API in this repository, supporting repositories, and the **AWS** footprint provisioned by **voyager-infrastructure** (Academy Learner Lab–oriented shell scripts). It is the living architecture view for onboarding and operations.
 
-This project follows a **multi-repository architecture**. The structure below represents a **logical unified view** of the system:
+**Last updated:** 2026-05-04
+
+---
+
+## 1. Scope and naming
+
+| Name | Meaning |
+|------|---------|
+| **SMARTRIP** | Product / brand for the tourism platform |
+| **voyager-backend-core** (this repo) | Core HTTP API: users, travel plans, social, matching/compatibility, activity sharing, Google OAuth; PostgreSQL persistence; Flyway migrations |
+| **voyager-infrastructure** | AWS resources: VPC, security groups, RDS, EC2/ASG, ALB, S3, optional API Gateway / queues / monitoring scripts |
+| **voyager-web-client** | Web frontend (separate repository) |
+| **voyager-android** | Android client (separate repository) |
+
+This `ARCHITECTURE.md` file intentionally describes the **whole platform** so agents and engineers see one consolidated picture.
+
+---
+
+## 2. Logical multi-repository map
 
 ```
-[Project Root]/
-├── mobile-app/               # Android application (Kotlin)
-│   ├── app/
-│   │   ├── src/main/
-│   │   │   ├── data/        # API, repositories, local storage
-│   │   │   ├── domain/      # Use cases and business rules
-│   │   │   ├── presentation/# UI, ViewModels
-│   │   │   └── di/          # Dependency injection (Hilt)
-│   ├── build.gradle
-│   └── AndroidManifest.xml
-│
-├── backend-api/             # Main backend (Spring Boot)
-│   ├── src/main/java/
-│   │   ├── controller/      # REST controllers
-│   │   ├── service/         # Business logic
-│   │   ├── repository/      # Data access layer
-│   │   ├── model/           # Entities
-│   │   ├── dto/             # Data transfer objects
-│   │   └── config/          # Security and configs
-│   ├── src/main/resources/
-│   │   └── application.yml
-│   └── Dockerfile
-│
-├── ai-service/              # AI microservice (Python)
-│   ├── app/
-│   │   ├── routes/          # API endpoints
-│   │   ├── services/        # Recommendation logic
-│   │   ├── models/          # ML models
-│   │   ├── schemas/         # Request/response schemas
-│   │   └── utils/           # Helpers
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
-│
-├── web-portal/              # React frontend
-│   ├── src/
-│   │   ├── components/      # UI components
-│   │   ├── pages/           # Views
-│   │   ├── services/        # API calls
-│   │   ├── hooks/           # Custom hooks
-│   │   └── store/           # State management
-│   ├── public/
-│   └── package.json
-│
-├── docs/                    # Documentation
-├── scripts/                 # Automation scripts
-├── .github/                 # CI/CD configs
-├── README.md
-└── ARCHITECTURE.md
+overtheair/  (workspace root — example layout)
+├── voyager-backend-core/     # Spring Boot API (this repo) + Dockerfile + CI + Postman + EC2 deploy script
+├── voyager-infrastructure/   # AWS CLI/bash provisioning (config.json, setup-*.sh)
+├── voyager-web-client/       # Web UI
+├── voyager-android/          # Mobile app
+└── overtheair-docs/          # Optional design and teaching materials
 ```
 
 ---
 
-## 2. High-Level System Diagram
+## 3. High-level runtime (AWS)
+
+Traffic from the public Internet reaches the **Application Load Balancer (ALB)** created by `setup-compute.sh`. Listeners forward to **Auto Scaling Groups (ASG)** on EC2:
+
+| Listener (example) | Target | Purpose |
+|----------------------|--------|---------|
+| HTTP **8080** | Backend ASG | Spring Boot API (`server.servlet.context-path=/api/v1`) |
+| HTTP **8000** | AI ASG | Separate Python/FastAPI stack (other repository); not implemented in this Java repo |
+
+**RDS PostgreSQL** (two instances in `config.json` by default: `smarttrip-backend-db`, `smarttrip-ai-db`) sit in private subnets with a DB subnet group. The **backend** container/JVM uses the **backend** RDS endpoint via `DB_URL` / credentials. The second database supports the AI tier when that service is deployed.
+
+**S3** buckets (from `setup-storage.sh`) hold static site assets, media, and logs as configured in `config.json`.
 
 ```mermaid
-flowchart LR
+flowchart TB
+  subgraph Clients
+    WEB[Web client]
+    MOB[Android app]
+  end
 
-User <--> MobileApp
-User <--> WebApp
+  subgraph AWS["AWS (voyager-infrastructure)"]
+    ALB[Application Load Balancer]
+    subgraph ASG_Back["ASG: backend"]
+      EC2_B[EC2 instances]
+      DOCKER[Docker: voyager-backend image]
+    end
+    subgraph ASG_AI["ASG: ai-service"]
+      EC2_AI[EC2 instances]
+    end
+    RDS_B[(RDS PostgreSQL — backend)]
+    RDS_AI[(RDS PostgreSQL — ai)]
+    S3[(S3 buckets)]
+  end
 
-MobileApp <--> BackendAPI
-WebApp <--> BackendAPI
-
-BackendAPI <--> Database
-BackendAPI <--> AIMicroservice
-BackendAPI <--> ExternalAPIs
-````
-
----
-
-## 3. Core Components
-
-### 3.1. Frontend
-
-Name: Mobile App & Web Portal
-
-Description:
-User-facing interfaces that allow travelers to interact with the platform, receive AI-powered recommendations, plan trips, and connect with other users.
-
-Technologies:
-
-* Kotlin (Android)
-* React (Web)
-
-Deployment:
-
-* Mobile: Google Play Store
-* Web: AWS S3 + CloudFront
+  WEB --> ALB
+  MOB --> ALB
+  ALB -->|8080| EC2_B
+  EC2_B --> DOCKER
+  DOCKER --> RDS_B
+  ALB -->|8000| EC2_AI
+  EC2_AI --> RDS_AI
+  WEB --> S3
+```
 
 ---
 
-### 3.2. Backend Services
+## 4. Provisioning flow (infrastructure scripts)
 
-#### 3.2.1. Backend API
+Executed from **voyager-infrastructure** (see its `README.md` for details). Typical order orchestrated by `setup-infrastructure.sh`:
 
-Name: Core Backend API
+1. **setup-vpc.sh** — VPC, public subnets, Internet connectivity  
+2. **setup-security.sh** — Security groups (backend, AI, database), IAM notes for Lab roles  
+3. **setup-storage.sh** — S3 buckets for frontend / media / logs  
+4. **setup-compute.sh** — Launch templates, ASGs, ALB, target groups (health checks: backend **8081** `/actuator/health` as configured there; API on **8080**)  
+5. **setup-networking.sh** — API Gateway / messaging where enabled  
+6. **setup-monitoring.sh** — CloudWatch log groups and alarms  
+7. **setup-databases.sh** — RDS PostgreSQL instances, subnet group  
 
-Description:
-Central system responsible for business logic, user management, reservations, and orchestration between services.
-
-Technologies:
-
-* Java (Spring Boot)
-
-Deployment:
-
-* AWS ECS / Elastic Beanstalk
+`config.json` drives names, instance sizes, AMI, keys, and database identifiers. **Secrets** should not stay in Git long-term; use Academy Lab patterns or externalize for real production.
 
 ---
 
-#### 3.2.2. AI Microservice
+## 5. Backend core (this repository)
 
-Name: AI Recommendation Service
+### 5.1 Responsibilities
 
-Description:
-Provides personalized travel recommendations, user profiling, and intelligent matching between travelers.
+- REST API under **`/api/v1`**
+- **JWT** authentication and **RBAC** (Spring Security)
+- **JPA** entities and **Flyway** schema management against PostgreSQL
+- **Google OAuth** (`/auth/google/*`)
+- **CORS** configurable for Lab/ALB origins (patterns, optional allow-all)
 
-Technologies:
+### 5.2 Not in this repository
 
-* Python (FastAPI)
+- **AI / ML recommendation service** — separate codebase and container image; only shown in the diagram as part of the AWS layout when deployed  
+- **Infrastructure resource definitions** — live in **voyager-infrastructure**
 
-Deployment:
+### 5.3 Deployment artifact (Learner Lab)
 
-* AWS ECS / Lambda
-
----
-
-## 4. Data Stores
-
-### 4.1. Primary Database
-
-Name: Main Application Database
-
-Type: PostgreSQL (AWS RDS)
-
-Purpose:
-Stores core application data including users, bookings, preferences, and interactions.
-
-Key Schemas/Collections:
-
-* users
-* bookings
-* preferences
-* reviews
+**GitHub Actions** builds a **Docker image** and exports `docker save` as a tarball. On EC2, **`scripts/ec2-deploy-backend.sh`** installs Docker if needed, optionally `docker load`s the image, ensures the **RDS database** exists (empty DB + Flyway on startup), and runs **`docker run`** under **systemd** with `--env-file`, publishing **8080** and **8081**.
 
 ---
 
-### 4.2. Object Storage
+## 6. Client applications
 
-Name: Media & Assets Storage
+| Channel | Repository | Typical delivery |
+|---------|------------|------------------|
+| Web | voyager-web-client | Static hosting (e.g. S3 website) or behind same ALB host for simpler CORS |
+| Mobile | voyager-android | Play Store / sideload; talks to ALB or API URL |
 
-Type: AWS S3
-
-Purpose:
-Stores images, documents, and static assets.
-
----
-
-## 5. External Integrations / APIs
-
-Service Name 1: Payment Gateway (e.g., Stripe)
-Purpose: Payment processing
-Integration Method: REST API
-
-Service Name 2: Tourism Providers APIs
-Purpose: Retrieve services, availability, and pricing
-Integration Method: REST API
+Both consume the same **HTTPS/HTTP** API contract documented via **OpenAPI** (`/api/v1/api-docs`, Swagger UI).
 
 ---
 
-## 6. Deployment & Infrastructure
+## 7. Data and storage
 
-Cloud Provider: AWS
-
-Key Services Used:
-
-* ECS / Elastic Beanstalk
-* S3 + CloudFront
-* RDS
-* Lambda (optional)
-
-CI/CD Pipeline:
-
-* Azure DevOps Pipelines
-
-Monitoring & Logging:
-
-* AWS CloudWatch
-* AWS X-Ray
+| Store | Role |
+|-------|------|
+| **RDS PostgreSQL (backend)** | System of record for users, travel plans, social graph, etc. |
+| **RDS PostgreSQL (ai)** | Dedicated DB for the AI microservice when deployed |
+| **S3** | Frontend bundles, media, logs (per infrastructure config) |
 
 ---
 
-## 7. Security Considerations
+## 8. Security (cross-cutting)
 
-Authentication:
-
-* JWT
-
-Authorization:
-
-* Role-Based Access Control (RBAC)
-
-Data Encryption:
-
-* HTTPS (TLS) in transit
-* Encrypted storage at rest
-
-Key Security Tools/Practices:
-
-* Secure API endpoints
-* Environment-based configuration
-* Secrets management
+- **Network:** Security groups restrict database ingress to backend/AI security groups; ALB exposes only listener ports.  
+- **Application:** JWT, BCrypt passwords, validated DTOs, actuator exposure tuned per profile.  
+- **Transport:** TLS at the load balancer in production configurations; JDBC `sslmode` for RDS in environment files.  
+- **CORS:** Application-level; see `application.yml` and `CORS_*` environment variables.
 
 ---
 
-## 8. Development & Testing Environment
+## 9. Observability
 
-Local Setup Instructions:
-See README.md for setup per repository
-
-Testing Frameworks:
-
-* JUnit (Backend)
-* Pytest (AI Service)
-* Jest (Frontend)
-
-Code Quality Tools:
-
-* ESLint
-* SonarQube
-* Prettier
+- **Spring Actuator** — health, metrics, info (management port **8081** in `prod` for split health checks)  
+- **CloudWatch** — infrastructure scripts create log groups / alarms where enabled  
+- **CI:** Trivy / SonarCloud in GitHub Actions as configured in `.github/workflows/`
 
 ---
 
-## 9. Future Considerations / Roadmap
+## 10. Glossary
 
-* Implement event-driven architecture (Kafka)
-* Enhance AI models with deep learning
-* Real-time recommendations
-* Expand social features between travelers
-
----
-
-## 10. Project Identification
-
-Project Name: SmarTrip
-
-Primary Contact/Team: Voyager
-
-Date of Last Update: 2026-04-21
+| Term | Definition |
+|------|------------|
+| **ALB** | AWS Application Load Balancer |
+| **ASG** | Auto Scaling Group |
+| **RDS** | Managed relational database service |
+| **JWT** | JSON Web Token |
+| **RBAC** | Role-based access control |
+| **Flyway** | Database migration tool used at application startup |
 
 ---
 
-## 11. Glossary / Acronyms
+## 11. Related documents
 
-AI: Artificial Intelligence
-API: Application Programming Interface
-JWT: JSON Web Token
-RBAC: Role-Based Access Control
-CI/CD: Continuous Integration / Continuous Deployment
-ML: Machine Learning
+- **voyager-backend-core:** repository `README.md`
+- **voyager-infrastructure:** repository `README.md` and `config.json`  
+
+---
+
+© SMARTRIP / Voyager Team — architecture overview for the full system.
