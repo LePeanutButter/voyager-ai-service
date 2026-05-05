@@ -13,9 +13,11 @@ from app.models.schemas import (
     TravelerMatchRequest,
     TravelerMatch,
     MatchingResponse,
-    TravelPreference
+    TravelPreference,
+    ConnectionOutcome,
 )
 from app.core.config import settings
+from app.ml.learning_store import MatchingLearningStore
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +25,10 @@ logger = logging.getLogger(__name__)
 class MatchingService:
     """Service for finding compatible travel partners."""
     
-    def __init__(self, model_manager):
-        """Initialize with ML model manager."""
+    def __init__(self, model_manager, learning_store: MatchingLearningStore):
+        """Initialize with ML model manager and continuous-learning store (PBI 27)."""
         self.model_manager = model_manager
+        self.learning_store = learning_store
         self.connections = {}  # In-memory storage (replace with database in production)
         self.user_profiles = {}  # Mock user profiles for matching
     
@@ -102,42 +105,41 @@ class MatchingService:
             if not user_profile or not target_profile:
                 return None
             
-            # Calculate compatibility components
+            # PBI 26: multidimensional scores (interests, estilo, presupuesto, ritmo, personalidad)
+            dimensions = await self._compute_match_dimensions(user_profile, target_profile)
+            weights = self.learning_store.get_weights()
+            overall_score = sum(
+                dimensions.get(dim, 0.0) * weights.get(dim, 0.0) for dim in weights
+            )
+            overall_score = min(1.0, max(0.0, overall_score))
+
             preference_compatibility = await self._calculate_preference_compatibility(
-                user_profile.get('preferences', []), 
-                target_profile.get('preferences', [])
+                user_profile.get('preferences', []),
+                target_profile.get('preferences', []),
             )
-            
             travel_style_compatibility = await self._calculate_travel_style_compatibility(
-                user_profile, 
-                target_profile
+                user_profile, target_profile
             )
-            
             demographic_compatibility = await self._calculate_demographic_compatibility(
-                user_profile, 
-                target_profile
+                user_profile, target_profile
             )
-            
-            # Calculate overall compatibility score
-            overall_score = (
-                preference_compatibility['score'] * 0.4 +
-                travel_style_compatibility['score'] * 0.4 +
-                demographic_compatibility['score'] * 0.2
-            )
-            
+
+            ml_signal = await self._matching_model_signal(user_profile, target_profile, dimensions)
+
             compatibility_analysis = {
                 'user_id': user_id,
                 'target_user_id': target_user_id,
-                'overall_score': min(overall_score, 1.0),
+                'overall_score': min(0.7 * overall_score + 0.3 * ml_signal, 1.0),
+                'dimensions': dimensions,
+                'weights_used': weights,
                 'preference_compatibility': preference_compatibility,
                 'travel_style_compatibility': travel_style_compatibility,
                 'demographic_compatibility': demographic_compatibility,
                 'common_preferences': preference_compatibility['common_preferences'],
-                'recommendation_reason': await self._generate_compatibility_explanation(
-                    preference_compatibility, 
-                    travel_style_compatibility
+                'recommendation_reason': await self._generate_multidimensional_explanation(
+                    dimensions, weights
                 ),
-                'calculated_at': datetime.now(timezone.utc)
+                'calculated_at': datetime.now(timezone.utc),
             }
             
             return compatibility_analysis
@@ -351,7 +353,10 @@ class MatchingService:
                 'location': 'New York',
                 'preferences': [TravelPreference.CULTURAL, TravelPreference.FOODIE],
                 'travel_style': 'mid-range',
-                'bio': 'Love exploring new cultures and trying local cuisine'
+                'budget_tier': 'mid',
+                'pace': 'moderate',
+                'personality_tags': {'explorer', 'social', 'curious'},
+                'bio': 'Love exploring new cultures and trying local cuisine',
             },
             'user2': {
                 'user_id': 'user2',
@@ -360,8 +365,23 @@ class MatchingService:
                 'location': 'San Francisco',
                 'preferences': [TravelPreference.ADVENTURE, TravelPreference.NATURE],
                 'travel_style': 'budget',
-                'bio': 'Adventure seeker who loves hiking and outdoor activities'
-            }
+                'budget_tier': 'low',
+                'pace': 'intense',
+                'personality_tags': {'explorer', 'calm'},
+                'bio': 'Adventure seeker who loves hiking and outdoor activities',
+            },
+            'user3': {
+                'user_id': 'user3',
+                'name': 'Mike Johnson',
+                'age': 25,
+                'location': 'Chicago',
+                'preferences': [TravelPreference.RELAXATION, TravelPreference.BEACH],
+                'travel_style': 'luxury',
+                'budget_tier': 'high',
+                'pace': 'relaxed',
+                'personality_tags': {'social', 'curious', 'foodie'},
+                'bio': 'Enjoy relaxing beach vacations and luxury travel',
+            },
         }
         
         return mock_profiles.get(user_id)
@@ -390,8 +410,11 @@ class MatchingService:
                 'location': 'New York',
                 'preferences': [TravelPreference.CULTURAL, TravelPreference.FOODIE],
                 'travel_style': 'mid-range',
+                'budget_tier': 'mid',
+                'pace': 'moderate',
+                'personality_tags': {'explorer', 'social', 'curious'},
                 'bio': 'Love exploring new cultures and trying local cuisine',
-                'profile_image': None
+                'profile_image': None,
             },
             {
                 'user_id': 'user2',
@@ -400,8 +423,11 @@ class MatchingService:
                 'location': 'San Francisco',
                 'preferences': [TravelPreference.ADVENTURE, TravelPreference.NATURE],
                 'travel_style': 'budget',
+                'budget_tier': 'low',
+                'pace': 'intense',
+                'personality_tags': {'explorer', 'calm'},
                 'bio': 'Adventure seeker who loves hiking and outdoor activities',
-                'profile_image': None
+                'profile_image': None,
             },
             {
                 'user_id': 'user3',
@@ -410,9 +436,12 @@ class MatchingService:
                 'location': 'Chicago',
                 'preferences': [TravelPreference.RELAXATION, TravelPreference.BEACH],
                 'travel_style': 'luxury',
+                'budget_tier': 'high',
+                'pace': 'relaxed',
+                'personality_tags': {'social', 'curious', 'foodie'},
                 'bio': 'Enjoy relaxing beach vacations and luxury travel',
-                'profile_image': None
-            }
+                'profile_image': None,
+            },
         ]
     
     async def _calculate_compatibility_scores(self, user_profile: Dict[str, Any], candidates: List[Dict[str, Any]], request: TravelerMatchRequest) -> List[Dict[str, Any]]:
@@ -421,7 +450,12 @@ class MatchingService:
         
         for candidate in candidates:
             compatibility_score = await self._calculate_simple_compatibility(user_profile, candidate)
-            
+            if request.preferences:
+                req_p = {p.value for p in request.preferences}
+                cand_p = {p.value for p in candidate.get("preferences", [])}
+                if req_p & cand_p:
+                    compatibility_score = min(1.0, compatibility_score + 0.06)
+
             candidate_data = candidate.copy()
             candidate_data['compatibility_score'] = compatibility_score
             candidate_data['common_preferences'] = await self._get_common_preferences(
@@ -434,30 +468,13 @@ class MatchingService:
         return scored_candidates
     
     async def _calculate_simple_compatibility(self, user1: Dict[str, Any], user2: Dict[str, Any]) -> float:
-        """Calculate simple compatibility score between two users."""
-        score = 0.0
-        
-        # Preference compatibility
-        prefs1 = set([pref.value for pref in user1.get('preferences', [])])
-        prefs2 = set([pref.value for pref in user2.get('preferences', [])])
-        
-        if prefs1 and prefs2:
-            preference_overlap = len(prefs1.intersection(prefs2)) / len(prefs1.union(prefs2))
-            score += preference_overlap * 0.5
-        
-        # Travel style compatibility
-        style1 = user1.get('travel_style', '')
-        style2 = user2.get('travel_style', '')
-        if style1 == style2:
-            score += 0.3
-        
-        # Age compatibility (within 10 years)
-        age1 = user1.get('age', 0)
-        age2 = user2.get('age', 0)
-        if age1 and age2 and abs(age1 - age2) <= 10:
-            score += 0.2
-        
-        return min(score, 1.0)
+        """Aggregate compatibility using learned weights over multidimensional scores (PBI 26/27)."""
+        dimensions = await self._compute_match_dimensions(user1, user2)
+        weights = self.learning_store.get_weights()
+        return min(
+            1.0,
+            sum(dimensions.get(k, 0.0) * weights.get(k, 0.0) for k in weights),
+        )
     
     async def _get_common_preferences(self, prefs1: List[TravelPreference], prefs2: List[TravelPreference]) -> List[TravelPreference]:
         """Get common preferences between two users."""
@@ -548,22 +565,101 @@ class MatchingService:
             'age_compatibility': age_score
         }
     
-    async def _generate_compatibility_explanation(self, pref_comp: Dict[str, Any], style_comp: Dict[str, Any]) -> str:
-        """Generate explanation for compatibility match."""
-        explanation_parts = []
-        
-        if pref_comp['score'] > 0.5:
-            explanation_parts.append(f"You share {pref_comp['total_common']} travel preferences")
-        
-        if style_comp['score'] > 0.7:
-            explanation_parts.append("You have similar travel styles")
-        
-        if not explanation_parts:
-            explanation_parts.append("You have some compatible interests")
-        
-        return " and ".join(explanation_parts)
-    
+    async def _generate_multidimensional_explanation(
+        self, dimensions: Dict[str, float], weights: Dict[str, float]
+    ) -> str:
+        """Human-readable rationale from dimension scores."""
+        ranked = sorted(dimensions.items(), key=lambda kv: kv[1] * weights.get(kv[0], 0), reverse=True)
+        top = [f"{name} ({score:.0%})" for name, score in ranked[:3] if score > 0.35]
+        if not top:
+            return "Compatibilidad moderada en varias dimensiones."
+        return "Mayor alineación en: " + ", ".join(top)
+
+    async def _compute_match_dimensions(
+        self, user_a: Dict[str, Any], user_b: Dict[str, Any]
+    ) -> Dict[str, float]:
+        """PBI 26: interests, travel_style, budget, pace, personality (0–1 each)."""
+        prefs_a = {p.value for p in user_a.get("preferences", [])}
+        prefs_b = {p.value for p in user_b.get("preferences", [])}
+        union = prefs_a | prefs_b
+        interests = len(prefs_a & prefs_b) / len(union) if union else 0.55
+
+        style_a = user_a.get("travel_style", "")
+        style_b = user_b.get("travel_style", "")
+        travel_style = 1.0 if style_a and style_a == style_b else 0.4
+
+        tier_a = user_a.get("budget_tier", "mid")
+        tier_b = user_b.get("budget_tier", "mid")
+        budget = 1.0 if tier_a == tier_b else 0.45
+
+        pace_a = user_a.get("pace", "moderate")
+        pace_b = user_b.get("pace", "moderate")
+        pace = 1.0 if pace_a == pace_b else 0.42
+
+        tags_a = set(user_a.get("personality_tags", []))
+        tags_b = set(user_b.get("personality_tags", []))
+        u_tags = tags_a | tags_b
+        personality = len(tags_a & tags_b) / len(u_tags) if u_tags else 0.5
+
+        return {
+            "interests": round(float(interests), 4),
+            "travel_style": round(float(travel_style), 4),
+            "budget": round(float(budget), 4),
+            "pace": round(float(pace), 4),
+            "personality": round(float(personality), 4),
+        }
+
+    async def _matching_model_signal(
+        self,
+        user_profile: Dict[str, Any],
+        target_profile: Dict[str, Any],
+        dimensions: Dict[str, float],
+    ) -> float:
+        """Blend traveler matching model output when available (PBI 26)."""
+        model = self.model_manager.get_model("traveler_matching_model")
+        if not model or not model.is_loaded:
+            return float(sum(dimensions.values()) / max(len(dimensions), 1))
+        try:
+            pred = await model.predict(
+                {
+                    "user1_id": user_profile.get("user_id", ""),
+                    "user2_id": target_profile.get("user_id", ""),
+                    "user1_profile": {"preferences": [p.value for p in user_profile.get("preferences", [])]},
+                    "user2_profile": {"preferences": [p.value for p in target_profile.get("preferences", [])]},
+                }
+            )
+            return float(min(1.0, max(0.0, pred.get("compatibility_score", 0.75))))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Matching model signal fallback: %s", exc)
+            return float(sum(dimensions.values()) / max(len(dimensions), 1))
+
+    async def process_connection_outcome(
+        self,
+        user_id: str,
+        target_user_id: str,
+        outcome: ConnectionOutcome,
+        dimension_snapshot: Optional[Dict[str, float]] = None,
+        notes: Optional[str] = None,
+    ) -> Dict[str, float]:
+        """PBI 27: reinforce or dampen weights from explicit connection outcomes."""
+        snap = dimension_snapshot
+        if snap is None:
+            ua = await self._get_user_profile(user_id)
+            ub = await self._get_user_profile(target_user_id)
+            if ua and ub:
+                snap = await self._compute_match_dimensions(ua, ub)
+            else:
+                snap = {}
+        if outcome == ConnectionOutcome.SUCCESS:
+            return self.learning_store.record_success(snap, notes)
+        return self.learning_store.record_incompatible(snap, notes)
+
     async def _update_matching_algorithm(self, user_id: str, target_user_id: str, rating: int):
-        """Update matching algorithm based on feedback."""
-        # In production, implement machine learning model updates
-        logger.info(f"Updating matching algorithm based on feedback: {rating}/5")
+        """Nudge learned weights from numeric feedback (PBI 27)."""
+        self.learning_store.record_rating_feedback(rating)
+        logger.info(
+            "Updated matching weights from rating %s/5 (users %s <-> %s)",
+            rating,
+            user_id,
+            target_user_id,
+        )

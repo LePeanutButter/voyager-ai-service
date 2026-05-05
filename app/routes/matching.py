@@ -13,7 +13,9 @@ from app.models.schemas import (
     TravelerMatchRequest,
     TravelerMatch,
     MatchingResponse,
-    APIResponse
+    APIResponse,
+    ConnectionOutcomeRequest,
+    ConnectionOutcomeResponse,
 )
 from app.services.matching_service import MatchingService
 from app.core.config import settings
@@ -27,8 +29,11 @@ async def get_matching_service(request: Request) -> MatchingService:
     model_manager = getattr(request.app.state, 'model_manager', None)
     if not model_manager or not model_manager.is_ready():
         raise HTTPException(status_code=503, detail="ML models not loaded")
-    
-    return MatchingService(model_manager)
+    learning = getattr(request.app.state, "matching_learning", None)
+    if learning is None:
+        raise HTTPException(status_code=503, detail="Matching learning store not initialised")
+
+    return MatchingService(model_manager, learning)
 
 
 @router.post("/find", response_model=MatchingResponse)
@@ -224,6 +229,28 @@ async def get_travel_buddy_recommendations(
     except Exception as e:
         logger.error(f"Error getting travel buddy recommendations: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to get travel buddy recommendations")
+
+
+@router.post("/learning/connection-outcome", response_model=ConnectionOutcomeResponse)
+async def submit_connection_outcome(
+    body: ConnectionOutcomeRequest,
+    service: MatchingService = Depends(get_matching_service),
+):
+    """
+    PBI 27: registrar conexión exitosa o incompatible para ajustar pesos del matching.
+    """
+    try:
+        weights = await service.process_connection_outcome(
+            body.user_id,
+            body.target_user_id,
+            body.outcome,
+            body.dimension_snapshot,
+            body.notes,
+        )
+        return ConnectionOutcomeResponse(status="ok", updated_weights=weights)
+    except Exception as e:
+        logger.error("Error recording connection outcome: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to record connection outcome")
 
 
 @router.post("/feedback/{user_id}/{target_user_id}")

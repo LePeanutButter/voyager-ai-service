@@ -19,6 +19,7 @@ import logging
 from app.core.config import settings
 from app.routes import recommendations, users, matching
 from app.ml.model_loader import ModelManager
+from app.ml.learning_store import MatchingLearningStore
 from app.chat.router import router as chat_router
 from app.chat.service import ChatService
 
@@ -38,6 +39,9 @@ async def lifespan(app: FastAPI):
     model_manager = ModelManager()
     await model_manager.load_models()
     app.state.model_manager = model_manager
+
+    # Continuous matching weights (PBI 27) — in-memory; persist in production
+    app.state.matching_learning = MatchingLearningStore()
 
     # Initialize ChatService singleton (holds in-memory conversation store)
     chat_service = ChatService()

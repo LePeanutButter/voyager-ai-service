@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     # Matching algorithm settings
     MAX_MATCHES: int = 20
     MIN_COMPATIBILITY_SCORE: float = 0.6
+    # PBI 24: minimum destination–profile compatibility (0–1) to surface a card
+    DESTINATION_MIN_COMPATIBILITY: float = 0.80
 
     # -----------------------------------------------------------------------
     # LLM Integration settings

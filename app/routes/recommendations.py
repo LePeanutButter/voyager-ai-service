@@ -10,10 +10,14 @@ from typing import List, Optional
 import logging
 
 from app.models.schemas import (
-    RecommendationRequest, 
-    RecommendationResponse, 
+    RecommendationRequest,
+    RecommendationResponse,
     Activity,
-    APIResponse
+    APIResponse,
+    DestinationRecommendationRequest,
+    DestinationRecommendationResponse,
+    ContextualActivityRequest,
+    ContextualActivityResponse,
 )
 from app.services.recommendation_service import RecommendationService
 from app.core.config import settings
@@ -29,6 +33,36 @@ async def get_recommendation_service(request: Request) -> RecommendationService:
         raise HTTPException(status_code=503, detail="ML models not loaded")
     
     return RecommendationService(model_manager)
+
+
+@router.post("/destinations/personalized", response_model=DestinationRecommendationResponse)
+async def get_personalized_destinations(
+    body: DestinationRecommendationRequest,
+    service: RecommendationService = Depends(get_recommendation_service),
+):
+    """
+    PBI 24: destinos personalizados con puntuación de compatibilidad y sesgo a patrones exitosos.
+    """
+    try:
+        return await service.get_personalized_destinations(body)
+    except Exception as e:
+        logger.error("Error generating destination recommendations: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to generate destination recommendations")
+
+
+@router.post("/activities/contextual", response_model=ContextualActivityResponse)
+async def get_contextual_activities(
+    body: ContextualActivityRequest,
+    service: RecommendationService = Depends(get_recommendation_service),
+):
+    """
+    PBI 25: actividades en tiempo real según ubicación, clima y preferencias (prioriza indoor si el clima es adverso).
+    """
+    try:
+        return await service.get_contextual_activities(body)
+    except Exception as e:
+        logger.error("Error generating contextual activities: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to generate contextual activities")
 
 
 @router.post("/personalized", response_model=RecommendationResponse)
