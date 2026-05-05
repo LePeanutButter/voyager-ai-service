@@ -140,41 +140,113 @@ def _budget_tier(budget_usd: Optional[float]) -> str:
 class ChatRecommendationEngine:
     """Generates context-aware, specific suggestions."""
 
+    def _destination_candidates(self, chosen_dest: Optional[str]) -> List[str]:
+        if chosen_dest in _COUNTRY_MAP:
+            return _COUNTRY_MAP[chosen_dest]
+        return list(_DESTINATIONS.keys())
+
+    def _score_destination(
+        self, destination: str, user_tags: set, tier: str
+    ) -> Tuple[int, str, Dict]:
+        info = _DESTINATIONS[destination]
+        score = 0
+        dest_tags = info["tags"]
+        if tier in dest_tags:
+            score += 2
+        for tag in user_tags:
+            if tag in dest_tags:
+                score += 3
+        return score, destination, info
+
+    def _selection_reason(
+        self,
+        context: TravelContext,
+        top_dest: str,
+        top_info: Dict,
+        user_tags: set,
+        tier: str,
+    ) -> str:
+        if context.destination and context.destination.title() in _COUNTRY_MAP:
+            return f"Selected {top_dest} as the best match for your trip to {context.destination.title()}."
+        match_tags = [t for t in user_tags if t in top_info["tags"]]
+        if match_tags:
+            reason_tags = " and ".join(match_tags[:2])
+            return f"Selected because it perfectly matches your preference for {reason_tags}."
+        return f"Selected because it fits your {tier} budget profile perfectly."
+
     def _resolve_destination(self, context: TravelContext, user_tags: set, tier: str) -> Tuple[str, str]:
         chosen_dest = context.destination.title() if context.destination else None
-        reasoning_str = ""
-        
-        if not chosen_dest or chosen_dest in _COUNTRY_MAP:
-            scored = []
-            cities_to_score = _COUNTRY_MAP[chosen_dest] if chosen_dest in _COUNTRY_MAP else _DESTINATIONS.keys()
-            for dest in cities_to_score:
-                info = _DESTINATIONS[dest]
-                score = 0
-                dest_tags = info["tags"]
-                if tier in dest_tags: score += 2
-                for tag in user_tags:
-                    if tag in dest_tags: score += 3
-                scored.append((score, dest, info))
-                
-            scored.sort(key=lambda x: x[0], reverse=True)
-            top_dest = scored[0][1]
-            top_info = scored[0][2]
-            
-            if context.destination and context.destination.title() in _COUNTRY_MAP:
-                reasoning_str = f"Selected {top_dest} as the best match for your trip to {context.destination.title()}."
-            else:
-                match_tags = [t for t in user_tags if t in top_info["tags"]]
-                if match_tags:
-                    reason_tags = " and ".join(match_tags[:2])
-                    reasoning_str = f"Selected because it perfectly matches your preference for {reason_tags}."
-                else:
-                    reasoning_str = f"Selected because it fits your {tier} budget profile perfectly."
-            
-            chosen_dest = top_dest
-        else:
-            reasoning_str = f"Focused on {chosen_dest} to match your request."
-            
-        return chosen_dest, reasoning_str
+        if chosen_dest and chosen_dest not in _COUNTRY_MAP:
+            return chosen_dest, f"Focused on {chosen_dest} to match your request."
+
+        scored = [
+            self._score_destination(dest, user_tags, tier)
+            for dest in self._destination_candidates(chosen_dest)
+        ]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        _, top_dest, top_info = scored[0]
+        return top_dest, self._selection_reason(context, top_dest, top_info, user_tags, tier)
+
+    def _build_raw_activities(self, dest_query: str) -> List[Dict]:
+        if dest_query in _ACTIVITIES:
+            return [{**act, "city": dest_query} for act in _ACTIVITIES[dest_query]]
+        return [
+            {"name": "Explore the city center", "type": "sightseeing", "cost": 0, "tags": ["free", "sightseeing"], "city": dest_query},
+            {"name": "Dine at a local restaurant", "type": "dining", "cost": 30, "tags": ["food", "local"], "city": dest_query},
+            {"name": "Visit the main cultural district", "type": "cultural", "cost": 15, "tags": ["educational", "cultural"], "city": dest_query},
+            {"name": "Relax in prominent parks", "type": "relaxation", "cost": 0, "tags": ["free", "nature"], "city": dest_query},
+        ]
+
+    def _filter_activities(self, raw_activities: List[Dict], is_low_budget: bool) -> List[Dict]:
+        if not is_low_budget:
+            return list(raw_activities)
+        return [
+            act
+            for act in raw_activities
+            if not (act["cost"] > 40 or "premium" in act["tags"])
+        ]
+
+    def _append_duration_plan(
+        self, suggestions: List[Suggestion], filtered: List[Dict], duration_days: int, tier: str
+    ) -> None:
+        day = 1
+        count = 0
+        acts_per_day = 2
+        for act in filtered:
+            suggestions.append(Suggestion(
+                name=f"Day {day}: {act['name']}",
+                activity_type=act["type"],
+                description="",
+                estimated_cost_usd=float(act["cost"]) if act["cost"] > 0 else 0.0,
+                budget_tier=tier,
+                tags=act["tags"]
+            ))
+            count += 1
+            if count >= acts_per_day:
+                day += 1
+                count = 0
+                if day > duration_days:
+                    break
+
+    def _append_simple_plan(self, suggestions: List[Suggestion], filtered: List[Dict], max_suggestions: int, tier: str) -> None:
+        for act in filtered[:max_suggestions]:
+            suggestions.append(Suggestion(
+                name=act["name"],
+                activity_type=act["type"],
+                description="",
+                estimated_cost_usd=float(act["cost"]) if act["cost"] > 0 else 0.0,
+                budget_tier=tier,
+                tags=act["tags"]
+            ))
+
+    def _score_activity_for_context(self, act: Dict, is_low_budget: bool, user_tags: set) -> int:
+        score = 0
+        if is_low_budget and ("free" in act["tags"] or "budget" in act["tags"] or act["cost"] == 0):
+            score += 10
+        for tag in user_tags:
+            if tag in act["tags"] or tag == act["type"]:
+                score += 5
+        return score
 
     def _build_itinerary_for_destination(
         self, 
@@ -199,71 +271,18 @@ class ChatRecommendationEngine:
             tags=[]
         ))
 
-        raw_activities = []
-        if dest_query in _ACTIVITIES:
-            for act in _ACTIVITIES[dest_query]:
-                act["city"] = dest_query
-                raw_activities.append(act)
-        
-        if not raw_activities:
-            raw_activities = [
-                {"name": "Explore the city center", "type": "sightseeing", "cost": 0, "tags": ["free", "sightseeing"], "city": dest_query},
-                {"name": "Dine at a local restaurant", "type": "dining", "cost": 30, "tags": ["food", "local"], "city": dest_query},
-                {"name": "Visit the main cultural district", "type": "cultural", "cost": 15, "tags": ["educational", "cultural"], "city": dest_query},
-                {"name": "Relax in prominent parks", "type": "relaxation", "cost": 0, "tags": ["free", "nature"], "city": dest_query},
-            ]
+        raw_activities = self._build_raw_activities(dest_query)
+        filtered = self._filter_activities(raw_activities, is_low_budget)
 
-        filtered = []
-        for act in raw_activities:
-            if is_low_budget:
-                if act["cost"] > 40 or "premium" in act["tags"]:
-                    continue
-            filtered.append(act)
-
-        def score_act(act):
-            score = 0
-            if is_low_budget and ("free" in act["tags"] or "budget" in act["tags"] or act["cost"] == 0):
-                score += 10
-            for tag in user_tags:
-                if tag in act["tags"] or tag == act["type"]:
-                    score += 5
-            return score
-
-        filtered.sort(key=score_act, reverse=True)
+        filtered.sort(
+            key=lambda act: self._score_activity_for_context(act, is_low_budget, user_tags),
+            reverse=True,
+        )
 
         if context.duration_days and context.duration_days > 0:
-            day = 1
-            count = 0
-            acts_per_day = 2
-            
-            for act in filtered:
-                sugg_name = f"Day {day}: {act['name']}"
-                
-                suggestions.append(Suggestion(
-                    name=sugg_name,
-                    activity_type=act["type"],
-                    description="",
-                    estimated_cost_usd=float(act["cost"]) if act["cost"] > 0 else 0.0,
-                    budget_tier=tier,
-                    tags=act["tags"]
-                ))
-                
-                count += 1
-                if count >= acts_per_day:
-                    day += 1
-                    count = 0
-                    if day > context.duration_days:
-                        break
+            self._append_duration_plan(suggestions, filtered, context.duration_days, tier)
         else:
-            for act in filtered[:max_suggestions]:
-                suggestions.append(Suggestion(
-                    name=act['name'],
-                    activity_type=act["type"],
-                    description="",
-                    estimated_cost_usd=float(act["cost"]) if act["cost"] > 0 else 0.0,
-                    budget_tier=tier,
-                    tags=act["tags"]
-                ))
+            self._append_simple_plan(suggestions, filtered, max_suggestions, tier)
 
         return suggestions
 

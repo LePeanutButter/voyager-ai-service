@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 import logging
 import math
 import random
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from app.modules.common.schemas.enums import ActivityType, TravelPreference, WeatherCondition
@@ -37,6 +38,7 @@ from app.modules.recommendations.schemas import (
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+_SAFE_RANDOM = secrets.SystemRandom()
 
 # Curated catalog for PBI 24 (destinations). Tags align with TravelPreference themes.
 _DESTINATION_CATALOG: List[Dict[str, Any]] = [
@@ -161,7 +163,7 @@ class RecommendationService:
             # Sort by rating and popularity
             popular_activities = sorted(
                 mock_activities, 
-                key=lambda x: (x.rating, random.random()), 
+                key=lambda x: (x.rating, _SAFE_RANDOM.random()), 
                 reverse=True
             )[:limit]
             
@@ -198,7 +200,7 @@ class RecommendationService:
             # Simulate trending with random boost and recency
             trending_activities = []
             for activity in mock_activities:
-                trending_score = activity.rating + random.uniform(0, 1)
+                trending_score = activity.rating + _SAFE_RANDOM.uniform(0, 1)
                 activity_dict = activity.dict()
                 activity_dict['trending_score'] = trending_score
                 trending_activities.append(activity_dict)
@@ -272,15 +274,8 @@ class RecommendationService:
         """
         try:
             # In production, store in database and use for model retraining
-            feedback_data = {
-                'user_id': user_id,
-                'activity_id': activity_id,
-                'rating': rating,
-                'feedback_text': feedback_text,
-                'timestamp': datetime.now(timezone.utc)
-            }
-            
-            logger.info(f"Recorded feedback: {feedback_data}")
+            _ = (user_id, activity_id, feedback_text)
+            logger.info("Recorded recommendation feedback with rating %s", rating)
             
             # Update user preferences based on feedback
             self._update_user_preferences_from_feedback(user_id, activity_id)
@@ -357,7 +352,7 @@ class RecommendationService:
             theme_boost = self._compute_theme_boost(tw, tags)
             score = min(
                 1.0,
-                0.72 * base + 0.18 + success_boost + theme_boost + random.uniform(0.01, 0.04),
+                0.72 * base + 0.18 + success_boost + theme_boost + _SAFE_RANDOM.uniform(0.01, 0.04),
             )
             rationale = self._build_destination_rationale(base, success_boost, theme_boost)
             card = DestinationCard(
@@ -594,10 +589,10 @@ class RecommendationService:
         }
 
         for i in range(count):
-            cat = random.choice(categories)
-            indoor = cat in indoor_categories or random.random() < 0.35
-            lat = center_lat + random.uniform(-0.08, 0.08)
-            lon = center_lon + random.uniform(-0.08, 0.08)
+            cat = _SAFE_RANDOM.choice(categories)
+            indoor = cat in indoor_categories or _SAFE_RANDOM.random() < 0.35
+            lat = center_lat + _SAFE_RANDOM.uniform(-0.08, 0.08)
+            lon = center_lon + _SAFE_RANDOM.uniform(-0.08, 0.08)
             activities.append(
                 Activity(
                     activity_id=f"ctx_{city}_{i}",
@@ -611,10 +606,10 @@ class RecommendationService:
                         country="",
                         radius_km=5.0,
                     ),
-                    rating=random.uniform(3.8, 5.0),
-                    price_range=random.choice(["$", "$$", "$$$"]),
-                    duration_hours=random.uniform(1.0, 6.0),
-                    tags=[random.choice([p.value for p in preferences]) for _ in range(3)],
+                    rating=_SAFE_RANDOM.uniform(3.8, 5.0),
+                    price_range=_SAFE_RANDOM.choice(["$", "$$", "$$$"]),
+                    duration_hours=_SAFE_RANDOM.uniform(1.0, 6.0),
+                    tags=[_SAFE_RANDOM.choice([p.value for p in preferences]) for _ in range(3)],
                     requirements=[],
                     best_time_to_visit="Hoy",
                     images=[],
@@ -672,13 +667,13 @@ class RecommendationService:
                     score += 0.4
             
             # Location proximity (mock calculation)
-            score += random.uniform(0.1, 0.3) * 0.2
+            score += _SAFE_RANDOM.uniform(0.1, 0.3) * 0.2
             
             # Price range matching
             budget = user_profile.get('budget_range', {})
             if budget:
                 # Simple price matching logic
-                score += random.uniform(0.1, 0.2) * 0.1
+                score += _SAFE_RANDOM.uniform(0.1, 0.2) * 0.1
             if request.budget_limit is not None:
                 score += min(0.08, float(request.budget_limit) / 10000.0)
             if request.group_size is not None and request.group_size > 1:
@@ -744,27 +739,27 @@ class RecommendationService:
         }
         safe_count = max(1, min(int(count), 200))
         for i in range(safe_count):
-            cat = random.choice(categories)
+            cat = _SAFE_RANDOM.choice(categories)
             activity = Activity(
                 activity_id=f"activity_{location}_{i}",
                 name=f"Activity {i+1} in {location}",
                 category=cat,
                 description=f"Amazing activity {i+1} in {location} with great experiences",
                 location=Location(
-                    latitude=random.uniform(-90, 90),
-                    longitude=random.uniform(-180, 180),
+                    latitude=_SAFE_RANDOM.uniform(-90, 90),
+                    longitude=_SAFE_RANDOM.uniform(-180, 180),
                     city=location,
                     country="Country",
                     radius_km=10.0
                 ),
-                rating=random.uniform(3.0, 5.0),
-                price_range=random.choice(["$", "$$", "$$$", "$$$$"]),
-                duration_hours=random.uniform(1, 8),
-                tags=[random.choice([pref.value for pref in preferences]) for _ in range(3)],
+                rating=_SAFE_RANDOM.uniform(3.0, 5.0),
+                price_range=_SAFE_RANDOM.choice(["$", "$$", "$$$", "$$$$"]),
+                duration_hours=_SAFE_RANDOM.uniform(1, 8),
+                tags=[_SAFE_RANDOM.choice([pref.value for pref in preferences]) for _ in range(3)],
                 requirements=[],
                 best_time_to_visit="Any time",
                 images=[],
-                indoor=cat in indoor_cats or random.random() < 0.25,
+                indoor=cat in indoor_cats or _SAFE_RANDOM.random() < 0.25,
             )
             activities.append(activity)
         
@@ -808,4 +803,5 @@ class RecommendationService:
     def _update_user_preferences_from_feedback(self, user_id: str, activity_id: str):
         """Placeholder hook for future preference learning from ratings."""
         # In production, implement preference learning algorithm
-        logger.info(f"Updating preferences for user {user_id} based on feedback for {activity_id}")
+        _ = (user_id, activity_id)
+        logger.info("Updating user preferences from recommendation feedback")

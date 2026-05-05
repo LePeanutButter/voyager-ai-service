@@ -54,6 +54,9 @@ PRIMARY = _q(
     ],
 )
 
+BUDGET_LABEL_ECONOMY = "Economía / ajustado"
+BUDGET_LABEL_COMFORT = "Cómodo"
+
 
 class AdaptiveQuestionnaireEngine:
     """Selects the next question batch from accumulated answers (stateless logic)."""
@@ -141,9 +144,9 @@ class AdaptiveQuestionnaireEngine:
                             "trip_budget_band",
                             "Para calibrar sugerencias, ¿cómo describirías tu presupuesto típico de viaje?",
                             [
-                                ("budget", "Economía / ajustado"),
+                                ("budget", BUDGET_LABEL_ECONOMY),
                                 ("mid", "Intermedio"),
-                                ("comfort", "Cómodo"),
+                                ("comfort", BUDGET_LABEL_COMFORT),
                                 ("luxury", "Premium"),
                             ],
                         ),
@@ -186,9 +189,9 @@ class AdaptiveQuestionnaireEngine:
                             "trip_budget_band",
                             "¿Cómo describirías tu presupuesto típico de viaje?",
                             [
-                                ("budget", "Economía / ajustado"),
+                                ("budget", BUDGET_LABEL_ECONOMY),
                                 ("mid", "Intermedio"),
-                                ("comfort", "Cómodo"),
+                                ("comfort", BUDGET_LABEL_COMFORT),
                                 ("luxury", "Premium"),
                             ],
                         ),
@@ -231,9 +234,9 @@ class AdaptiveQuestionnaireEngine:
                         "trip_budget_band",
                         "¿Cómo describirías tu presupuesto típico de viaje?",
                         [
-                            ("budget", "Economía / ajustado"),
+                            ("budget", BUDGET_LABEL_ECONOMY),
                             ("mid", "Intermedio"),
-                            ("comfort", "Cómodo"),
+                            ("comfort", BUDGET_LABEL_COMFORT),
                             ("luxury", "Premium"),
                         ],
                     ),

@@ -175,7 +175,7 @@ async def get_trending_activities(
         HTTPException: 500 on internal error.
     """
     try:
-        logger.info("Fetching trending activities for category: %s", category)
+        logger.info("Fetching trending activities")
         activities = await _resolve(service.get_trending_activities(category, limit))
         return {"category": category, "activities": activities, "total_results": len(activities)}
     except Exception as e:
@@ -250,7 +250,7 @@ async def submit_recommendation_feedback(
     try:
         if rating < 1 or rating > 5:
             raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
-        logger.info("Recording feedback from user %s for activity %s", user_id, activity_id)
+        logger.info("Recording recommendation feedback")
         await _resolve(service.record_feedback(user_id, activity_id, rating, feedback_text))
         return {
             "message": "Feedback recorded successfully",

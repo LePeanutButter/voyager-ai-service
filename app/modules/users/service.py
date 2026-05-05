@@ -124,7 +124,7 @@ class UserService:
             Updated ``UserProfile``, or ``None`` if the user does not exist or on error.
         """
         try:
-            logger.info(f"Updating profile for user {user_id}")
+            logger.info("Updating user profile")
             
             # Get existing profile
             existing_profile = self.user_profiles.get(user_id)
@@ -147,7 +147,7 @@ class UserService:
             # Store updated profile
             self.user_profiles[user_id] = existing_profile
             
-            logger.info(f"Successfully updated profile for user {user_id}")
+            logger.info("Successfully updated user profile")
             return existing_profile
             
         except Exception as e:
@@ -165,7 +165,7 @@ class UserService:
             ``True`` if updated, ``False`` if the user is missing or on error.
         """
         try:
-            logger.info(f"Updating preferences for user {user_id}")
+            logger.info("Updating user preferences")
             
             # Get existing profile
             existing_profile = self.user_profiles.get(user_id)
@@ -180,7 +180,7 @@ class UserService:
             # Store updated profile
             self.user_profiles[user_id] = existing_profile
             
-            logger.info(f"Successfully updated preferences for user {user_id}")
+            logger.info("Successfully updated user preferences")
             return True
             
         except Exception as e:
@@ -294,7 +294,7 @@ class UserService:
             ``True`` on success, ``False`` if deletion raises after logging.
         """
         try:
-            logger.info(f"Deleting profile for user {user_id}")
+            logger.info("Deleting user profile")
             
             # Delete profile
             if user_id in self.user_profiles:

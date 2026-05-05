@@ -11,6 +11,7 @@ Dependencies:
 from __future__ import annotations
 
 import logging
+import inspect
 
 from fastapi import APIRouter, HTTPException, status
 
@@ -26,9 +27,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _resolve(value):
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
 @router.post(
     "/questionnaire/step",
-    response_model=QuestionnaireStepResponse,
     summary="Adaptive questionnaire step",
 )
 async def questionnaire_step(
@@ -48,7 +54,7 @@ async def questionnaire_step(
         HTTPException: 400 on business `ValueError`; 500 on unexpected errors.
     """
     try:
-        return await service.process_step(body)
+        return await _resolve(service.process_step(body))
     except ValueError as exc:
         logger.warning("Validation error in questionnaire step: %s", exc)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
@@ -62,7 +68,6 @@ async def questionnaire_step(
 
 @router.post(
     "/questionnaire/submit",
-    response_model=QuestionnaireSubmitResponse,
     summary="Submit completed questionnaire",
 )
 async def questionnaire_submit(
@@ -82,7 +87,7 @@ async def questionnaire_submit(
         HTTPException: 400 if incomplete or invalid session; 500 on other errors.
     """
     try:
-        return await service.submit(body)
+        return await _resolve(service.submit(body))
     except ValueError as exc:
         logger.warning("Validation error in questionnaire submit: %s", exc)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

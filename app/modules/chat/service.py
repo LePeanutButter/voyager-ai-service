@@ -89,7 +89,6 @@ class ChatService:
         intent, partial_context = self._safe_extract(message)
 
         # ── Step 2: Read current session state ─────────────────────────
-        is_first = self.memory.is_first_message(user_id)
         old_budget = self.memory.get_context(user_id).budget_usd
 
         # ── Step 3: Store user message in history ──────────────────────
@@ -115,7 +114,6 @@ class ChatService:
             context=context,
             suggestions=suggestions,
             history=history,
-            is_first=is_first,
             old_budget=old_budget,
         )
 
@@ -221,7 +219,6 @@ class ChatService:
         context: TravelContext,
         suggestions: List[Suggestion],
         history: List[ConversationMessage],
-        is_first: bool,
         old_budget: Optional[float],
     ) -> Tuple[str, bool]:
         """
@@ -253,7 +250,6 @@ class ChatService:
             message=message,
             context=context,
             suggestions=suggestions,
-            is_first=is_first,
             old_budget=old_budget,
         ), False
 
@@ -281,7 +277,7 @@ class ChatService:
             return await self.llm_client.complete(system=system, user_message=user_prompt)
 
         # Multi-turn follow-up — inject history when prior messages exist
-        if history_dicts:
+        if len(history_dicts) > 1:
             system = follow_up_prompt.SYSTEM_PROMPT
             from app.modules.chat.schemas import ConversationMessage as CM
 
@@ -321,7 +317,6 @@ class ChatService:
         message: str,
         context: TravelContext,
         suggestions: List[Suggestion],
-        is_first: bool,
         old_budget: Optional[float],
     ) -> str:
         """Generate a reply using the rule-based fallback system."""

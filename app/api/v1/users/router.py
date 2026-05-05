@@ -130,11 +130,11 @@ async def update_user_profile(
         HTTPException: 404 if not found; 400 on validation; 500 on internal error.
     """
     try:
-        logger.info("Updating profile for user %s", user_id)
+        logger.info("Updating user profile")
         updated_profile = await _resolve(service.update_user_profile(user_id, profile_update))
         if not updated_profile:
             raise HTTPException(status_code=404, detail=USER_PROFILE_NOT_FOUND)
-        logger.info("Successfully updated profile for user %s", user_id)
+        logger.info("Successfully updated user profile")
         return updated_profile
     except HTTPException:
         raise
@@ -172,7 +172,7 @@ async def update_user_preferences(
         HTTPException: 404 if no profile; 500 on internal error.
     """
     try:
-        logger.info("Updating preferences for user %s", user_id)
+        logger.info("Updating user preferences")
         success = await _resolve(service.update_user_preferences(user_id, preferences))
         if not success:
             raise HTTPException(status_code=404, detail=USER_PROFILE_NOT_FOUND)
@@ -233,7 +233,7 @@ async def get_user_interaction_history(
         HTTPException: 500 on internal error.
     """
     try:
-        logger.info("Fetching interaction history for user %s", user_id)
+        logger.info("Fetching user interaction history")
         history = await _resolve(service.get_interaction_history(user_id, limit))
         return {"user_id": user_id, "interactions": history, "total_count": len(history)}
     except Exception as e:
@@ -295,7 +295,7 @@ async def delete_user_profile(user_id: str, service: UserServiceDep):
         HTTPException: 404 if it did not exist; 500 on internal error.
     """
     try:
-        logger.info("Deleting profile for user %s", user_id)
+        logger.info("Deleting user profile")
         success = await _resolve(service.delete_user_profile(user_id))
         if not success:
             raise HTTPException(status_code=404, detail=USER_PROFILE_NOT_FOUND)

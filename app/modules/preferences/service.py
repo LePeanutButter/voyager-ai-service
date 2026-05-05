@@ -15,6 +15,7 @@ Dependencies:
 from __future__ import annotations
 
 import logging
+import asyncio
 import uuid
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -75,6 +76,49 @@ class PreferenceQuestionnaireService:
         """Looks up a session by id, if still present."""
         return self._sessions.get(session_id)
 
+    @staticmethod
+    def _first_answer(answers: Dict[str, List[str]], key: str) -> Optional[str]:
+        return (answers.get(key) or [None])[0]
+
+    def _apply_adventure_profile(
+        self, answers: Dict[str, List[str]], categories: List[str], interests: List[str]
+    ) -> str:
+        categories.extend(["adventure", "outdoor"])
+        adventure_intensity = self._first_answer(answers, "adventure_intensity")
+        nature_focus = self._first_answer(answers, "nature_focus")
+        if adventure_intensity:
+            interests.append(f"adventure_intensity:{adventure_intensity}")
+        if nature_focus:
+            interests.append(f"nature_focus:{nature_focus}")
+            if nature_focus == "mostly_nature":
+                categories.append("nature")
+        return "active"
+
+    def _apply_cultural_profile(
+        self, answers: Dict[str, List[str]], categories: List[str], interests: List[str]
+    ) -> Optional[str]:
+        categories.extend(["cultural", "urban"])
+        culture_depth = self._first_answer(answers, "culture_depth")
+        cultural_pace = self._first_answer(answers, "cultural_pace")
+        if culture_depth:
+            interests.append(f"culture_depth:{culture_depth}")
+        if cultural_pace:
+            interests.append(f"cultural_pace:{cultural_pace}")
+            return cultural_pace.replace("_pace", "").replace("balanced", "balanced")
+        return None
+
+    def _apply_relax_profile(
+        self, answers: Dict[str, List[str]], categories: List[str], interests: List[str]
+    ) -> str:
+        categories.extend(["relaxation", "wellness"])
+        relax_setting = self._first_answer(answers, "relax_setting")
+        social_energy = self._first_answer(answers, "social_energy")
+        if relax_setting:
+            interests.append(f"relax_setting:{relax_setting}")
+        if social_energy:
+            interests.append(f"social_energy:{social_energy}")
+        return "slow"
+
     async def process_step(self, body: QuestionnaireStepRequest) -> QuestionnaireStepResponse:
         """Applies answers for one step and returns the next questions or completion.
 
@@ -104,13 +148,17 @@ class PreferenceQuestionnaireService:
         if not complete:
             sess.step_index += 1
 
+        await asyncio.sleep(0)
+        message = None
+        if not questions and complete:
+            message = "Cuestionario completo"
         return QuestionnaireStepResponse(
             session_id=sess.session_id,
             step_index=step_before,
             is_complete=complete,
             derived_primary_category=derived,
             questions=questions,
-            message=None if questions else ("Cuestionario completo" if complete else None),
+            message=message,
         )
 
     def _build_profile(self, answers: Dict[str, List[str]]) -> tuple[str, PreferenceProfilePayload, str]:
@@ -122,45 +170,18 @@ class PreferenceQuestionnaireService:
         Returns:
             Tuple of (primary_category, payload, ai_context_summary).
         """
-        primary = (answers.get("primary_travel_style") or ["unknown"])[0]
+        primary = self._first_answer(answers, "primary_travel_style") or "unknown"
         categories: List[str] = []
         interests: List[str] = []
         pace: Optional[str] = None
-        comfort: Optional[str] = None
-
-        budget = (answers.get("trip_budget_band") or [None])[0]
-        if budget:
-            comfort = budget
+        comfort = self._first_answer(answers, "trip_budget_band")
 
         if primary == "adventure":
-            categories.extend(["adventure", "outdoor"])
-            ai = (answers.get("adventure_intensity") or [None])[0]
-            nf = (answers.get("nature_focus") or [None])[0]
-            if ai:
-                interests.append(f"adventure_intensity:{ai}")
-            if nf:
-                interests.append(f"nature_focus:{nf}")
-                if nf == "mostly_nature":
-                    categories.append("nature")
-            pace = "active"
+            pace = self._apply_adventure_profile(answers, categories, interests)
         elif primary == "cultural":
-            categories.extend(["cultural", "urban"])
-            cd = (answers.get("culture_depth") or [None])[0]
-            cp = (answers.get("cultural_pace") or [None])[0]
-            if cd:
-                interests.append(f"culture_depth:{cd}")
-            if cp:
-                interests.append(f"cultural_pace:{cp}")
-                pace = cp.replace("_pace", "").replace("balanced", "balanced")
+            pace = self._apply_cultural_profile(answers, categories, interests)
         elif primary == "relax":
-            categories.extend(["relaxation", "wellness"])
-            rs = (answers.get("relax_setting") or [None])[0]
-            se = (answers.get("social_energy") or [None])[0]
-            if rs:
-                interests.append(f"relax_setting:{rs}")
-            if se:
-                interests.append(f"social_energy:{se}")
-            pace = "slow"
+            pace = self._apply_relax_profile(answers, categories, interests)
 
         payload = PreferenceProfilePayload(
             travel_categories=sorted(set(categories)),
@@ -205,6 +226,7 @@ class PreferenceQuestionnaireService:
         primary, profile, summary = self._build_profile(dict(complete_answers))
         profile.notes_for_ai = summary
 
+        await asyncio.sleep(0)
         logger.info(
             "Preference questionnaire submitted user=%s session=%s primary=%s",
             body.user_id,

@@ -184,7 +184,7 @@ class MatchingService:
             Exception: Logged and re-raised on persistence failures.
         """
         try:
-            logger.info(f"Initiating connection from {user_id} to {target_user_id}")
+            logger.info("Initiating user connection")
             
             connection_id = f"conn_{user_id}_{target_user_id}_{datetime.now(timezone.utc).timestamp()}"
             
@@ -219,7 +219,7 @@ class MatchingService:
             Matching connection dicts, or empty list on error.
         """
         try:
-            logger.info(f"Fetching connections for user {user_id}")
+            logger.info("Fetching user connections")
             
             user_connections = []
             
@@ -251,7 +251,7 @@ class MatchingService:
             Updated connection dict, or ``None`` if unknown or on error.
         """
         try:
-            logger.info(f"Responding to connection {connection_id} with {response}")
+            logger.info("Responding to user connection")
             
             connection = self.connections.get(connection_id)
             if not connection:
@@ -342,7 +342,7 @@ class MatchingService:
             Exception: Propagates after logging on unexpected failures.
         """
         try:
-            logger.info(f"Recording match feedback from {user_id} for {target_user_id}")
+            logger.info("Recording match feedback")
             
             # In production, store in database and use for model improvement
             _ = feedback_text

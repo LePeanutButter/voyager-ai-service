@@ -22,7 +22,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/dashboard", response_model=TrendsDashboardResponse)
+@router.get(
+    "/dashboard",
+    response_model=TrendsDashboardResponse,
+    responses={500: {"description": "Failed to build trends dashboard"}},
+)
 async def trends_dashboard(service: TrendsServiceDep):
     """Returns the trends dashboard (emerging destinations, signals, etc.).
 
@@ -43,7 +47,11 @@ async def trends_dashboard(service: TrendsServiceDep):
         raise HTTPException(status_code=500, detail="Failed to build trends dashboard")
 
 
-@router.get("/segments/{segment_id}/insights", response_model=SegmentInsightsResponse)
+@router.get(
+    "/segments/{segment_id}/insights",
+    response_model=SegmentInsightsResponse,
+    responses={500: {"description": "Failed to generate segment insights"}},
+)
 async def segment_insights(segment_id: str, service: TrendsServiceDep):
     """Returns the predictive snapshot for a traveler segment.
 
@@ -65,7 +73,11 @@ async def segment_insights(segment_id: str, service: TrendsServiceDep):
         raise HTTPException(status_code=500, detail="Failed to generate segment insights")
 
 
-@router.get("/weekly-digest", response_model=WeeklyTrendsDigestResponse)
+@router.get(
+    "/weekly-digest",
+    response_model=WeeklyTrendsDigestResponse,
+    responses={500: {"description": "Failed to build weekly digest"}},
+)
 async def weekly_trends_digest(service: TrendsServiceDep):
     """Returns the weekly digest of micro-trends and partner notices.
 

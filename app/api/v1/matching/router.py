@@ -126,7 +126,7 @@ async def initiate_connection(
         HTTPException: 500 on internal error.
     """
     try:
-        logger.info("Initiating connection from %s to %s", user_id, target_user_id)
+        logger.info("Initiating user connection")
         connection = await _resolve(service.initiate_connection(user_id, target_user_id, message))
         return {
             "message": "Connection request sent successfully",
@@ -162,7 +162,7 @@ async def get_user_connections(
         HTTPException: 500 on internal error.
     """
     try:
-        logger.info("Fetching connections for user %s", user_id)
+        logger.info("Fetching user connections")
         connections = await _resolve(service.get_user_connections(user_id, status))
         return {"user_id": user_id, "connections": connections, "total_count": len(connections)}
     except Exception as e:
@@ -201,7 +201,7 @@ async def respond_to_connection(
     try:
         if response not in ["accept", "decline"]:
             raise HTTPException(status_code=400, detail="Response must be 'accept' or 'decline'")
-        logger.info("Responding to connection %s with %s", connection_id, response)
+        logger.info("Responding to user connection")
         updated_connection = await _resolve(
             service.respond_to_connection(connection_id, response, message)
         )
@@ -244,7 +244,7 @@ async def get_travel_buddy_recommendations(
         HTTPException: 500 on internal error.
     """
     try:
-        logger.info("Getting travel buddy recommendations for user %s", user_id)
+        logger.info("Getting travel buddy recommendations")
         recommendations = await _resolve(
             service.get_travel_buddy_recommendations(user_id, location, limit)
         )
@@ -327,7 +327,7 @@ async def submit_match_feedback(
     try:
         if rating < 1 or rating > 5:
             raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
-        logger.info("Recording match feedback from %s for %s", user_id, target_user_id)
+        logger.info("Recording match feedback")
         await _resolve(service.record_match_feedback(user_id, target_user_id, rating, feedback_text))
         return {
             "message": "Match feedback recorded successfully",
