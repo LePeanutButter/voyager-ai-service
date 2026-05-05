@@ -5,7 +5,10 @@ Implements the core recommendation logic using ML models and
 business rules for generating personalized travel recommendations.
 """
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.services.trends_service import TrendsService
 import logging
 import math
 import random
@@ -41,15 +44,20 @@ _DESTINATION_CATALOG: List[Dict[str, Any]] = [
     {"destination_id": "dst_bali", "name": "Bali", "country": "Indonesia", "tags": ["beach", "relaxation", "nature"]},
     {"destination_id": "dst_lisbon", "name": "Lisbon", "country": "Portugal", "tags": ["cultural", "foodie", "beach"]},
     {"destination_id": "dst_patagonia", "name": "Patagonia", "country": "Argentina/Chile", "tags": ["adventure", "nature"]},
+    # Feature 15 (PBI 30) — también en señales de tendencias / dashboard
+    {"destination_id": "dst_azores", "name": "Azores", "country": "Portugal", "tags": ["nature", "adventure", "relaxation"]},
+    {"destination_id": "dst_georgia", "name": "Georgia (Caucasus)", "country": "Georgia", "tags": ["cultural", "foodie", "adventure"]},
+    {"destination_id": "dst_slovenia", "name": "Slovenia", "country": "Slovenia", "tags": ["nature", "cultural", "foodie"]},
 ]
 
 
 class RecommendationService:
     """Service for generating personalized travel recommendations."""
     
-    def __init__(self, model_manager):
-        """Initialize with ML model manager."""
+    def __init__(self, model_manager, trends_service: Optional["TrendsService"] = None):
+        """Initialize with ML model manager and optional trends service (Feature 15)."""
         self.model_manager = model_manager
+        self.trends_service = trends_service
         self.cache = {}  # Simple in-memory cache (replace with Redis in production)
     
     async def generate_recommendations(self, request: RecommendationRequest) -> RecommendationResponse:
@@ -335,11 +343,45 @@ class RecommendationService:
                 "manteniendo opciones afines a experiencias que funcionaron bien."
             )
 
+        # PBI 30: incluir emergentes compatibles con preferencias en recomendaciones personalizadas
+        merged = list(picked)
+        inserted_emerging = False
+        if self.trends_service and request.include_emerging_trends:
+            seen_ids = {c.destination_id for c in merged}
+            for hit in self.trends_service.emerging_for_preferences(pref_values):
+                if hit["destination_id"] in seen_ids:
+                    continue
+                inserted_emerging = True
+                boost = min(0.08, float(hit.get("surge_ratio", 0.5)) * 0.05)
+                score = min(0.99, settings.DESTINATION_MIN_COMPATIBILITY + 0.02 + boost)
+                rationale = (
+                    f"Tendencia emergente (volumen +{hit.get('surge_ratio', 0):.0%} vs ventana previa); "
+                    f"alineado con tus intereses."
+                )
+                merged.insert(
+                    0,
+                    DestinationCard(
+                        destination_id=hit["destination_id"],
+                        name=hit["name"],
+                        country=hit["country"],
+                        tags=list(hit.get("tags", [])),
+                        compatibility_score=round(score, 4),
+                        rationale=rationale,
+                    ),
+                )
+                seen_ids.add(hit["destination_id"])
+            if len(merged) > request.max_results:
+                merged = merged[: request.max_results]
+            if inserted_emerging:
+                diversity_note = (diversity_note + " " if diversity_note else "") + (
+                    "Se integraron destinos marcados como emergentes en el dashboard de tendencias."
+                )
+
         return DestinationRecommendationResponse(
             user_id=request.user_id,
-            destinations=picked[: request.max_results],
+            destinations=merged[: request.max_results],
             generated_at=datetime.now(timezone.utc),
-            diversity_note=diversity_note,
+            diversity_note=diversity_note.strip(),
         )
 
     async def get_contextual_activities(

@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     SERVICE_DESCRIPTION: str = (
         "AI-powered microservice for personalized travel recommendations, "
-        "conversational trip planning, and traveler matching"
+        "conversational trip planning, traveler matching, and predictive travel trends"
     )
     
     # API configuration
@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     MIN_COMPATIBILITY_SCORE: float = 0.6
     # PBI 24: minimum destination–profile compatibility (0–1) to surface a card
     DESTINATION_MIN_COMPATIBILITY: float = 0.80
+
+    # Feature 15 — predictive trends (PBI 30)
+    TREND_ANALYSIS_WINDOW_DAYS: int = 30
+    TREND_EMERGENCE_SURGE_RATIO: float = 0.50  # 50% growth vs previous window marks emerging
 
     # -----------------------------------------------------------------------
     # LLM Integration settings

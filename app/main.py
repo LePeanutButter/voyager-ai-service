@@ -17,9 +17,10 @@ from contextlib import asynccontextmanager
 import logging
 
 from app.core.config import settings
-from app.routes import recommendations, users, matching
+from app.routes import recommendations, users, matching, trends
 from app.ml.model_loader import ModelManager
 from app.ml.learning_store import MatchingLearningStore
+from app.services.trends_service import TrendsService
 from app.chat.router import router as chat_router
 from app.chat.service import ChatService
 
@@ -42,6 +43,11 @@ async def lifespan(app: FastAPI):
 
     # Continuous matching weights (PBI 27) — in-memory; persist in production
     app.state.matching_learning = MatchingLearningStore()
+
+    # Feature 15 — predictive trends (PBI 30–31)
+    trends_service = TrendsService()
+    await trends_service.refresh()
+    app.state.trends_service = trends_service
 
     # Initialize ChatService singleton (holds in-memory conversation store)
     chat_service = ChatService()
@@ -91,6 +97,12 @@ app.include_router(
     matching.router,
     prefix="/api/v1/matching",
     tags=["matching"]
+)
+
+app.include_router(
+    trends.router,
+    prefix="/api/v1/trends",
+    tags=["trends"]
 )
 
 # Chat router — AI Travel Chatbot

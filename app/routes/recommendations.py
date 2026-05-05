@@ -31,8 +31,9 @@ async def get_recommendation_service(request: Request) -> RecommendationService:
     model_manager = getattr(request.app.state, 'model_manager', None)
     if not model_manager or not model_manager.is_ready():
         raise HTTPException(status_code=503, detail="ML models not loaded")
-    
-    return RecommendationService(model_manager)
+    trends_service = getattr(request.app.state, "trends_service", None)
+
+    return RecommendationService(model_manager, trends_service=trends_service)
 
 
 @router.post("/destinations/personalized", response_model=DestinationRecommendationResponse)
