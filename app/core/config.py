@@ -1,8 +1,8 @@
 """
 Configuration settings for Tourism Assistant microservice.
 
-Centralized configuration management for different environments
-and service parameters.
+Centralized configuration management for different environments,
+service parameters, LLM integration, and chat feature settings.
 """
 
 from pydantic_settings import BaseSettings
@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     SERVICE_NAME: str = "tourism-assistant"
     VERSION: str = "1.0.0"
     DEBUG: bool = False
+    SERVICE_DESCRIPTION: str = (
+        "AI-powered microservice for personalized travel recommendations, "
+        "conversational trip planning, and traveler matching"
+    )
     
     # API configuration
     API_V1_STR: str = "/api/v1"
@@ -55,7 +59,27 @@ class Settings(BaseSettings):
     # Matching algorithm settings
     MAX_MATCHES: int = 20
     MIN_COMPATIBILITY_SCORE: float = 0.6
-    
+
+    # -----------------------------------------------------------------------
+    # LLM Integration settings
+    # LLM_PROVIDER: "openai" | "openai_compatible" | "ollama" | "none"
+    # Set to "none" (default) to run in rule-based fallback mode only.
+    # -----------------------------------------------------------------------
+    LLM_PROVIDER: str = "none"
+    LLM_API_KEY: str = ""
+    LLM_BASE_URL: str = "https://api.openai.com/v1"
+    LLM_MODEL: str = "gpt-4o-mini"
+    LLM_MAX_TOKENS: int = 1024
+    LLM_TEMPERATURE: float = 0.7
+
+    # -----------------------------------------------------------------------
+    # Chat feature settings
+    # -----------------------------------------------------------------------
+    # Maximum messages to retain per user session (oldest evicted when exceeded)
+    CHAT_MAX_HISTORY: int = 20
+    # Maximum suggestions returned per chat turn
+    CHAT_MAX_SUGGESTIONS: int = 5
+
     class Config:
         env_file = ".env"
         case_sensitive = True
