@@ -80,8 +80,8 @@ orjson>=3.10.0,<4
 # Rate limiting
 slowapi==0.1.9
 
-# API documentation
-fastapi-users==12.1.2
+# API documentation / auth helpers (15.x aligns with python-multipart>=0.0.22; 12.x pinned multipart==0.0.6)
+fastapi-users>=15.0.5,<16
 
 # Background task processing
 celery==5.3.4
