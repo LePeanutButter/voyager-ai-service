@@ -9,7 +9,7 @@ keep the LLM grounded in the evolving trip plan.
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
-    from app.chat.schemas import ConversationMessage, TravelContext
+    from app.modules.chat.schemas import ConversationMessage, TravelContext
 
 
 SYSTEM_PROMPT = """You are an expert AI travel planning assistant for the Voyager platform.

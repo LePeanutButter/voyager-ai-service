@@ -14,7 +14,7 @@ The system prompt instructs the model on:
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from app.chat.schemas import TravelContext
+    from app.modules.chat.schemas import TravelContext
 
 
 SYSTEM_PROMPT = """You are an expert AI travel planning assistant for the Voyager platform.

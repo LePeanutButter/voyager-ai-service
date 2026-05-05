@@ -14,7 +14,7 @@ import logging
 from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
-    from app.chat.schemas import TravelContext, Suggestion
+    from app.modules.chat.schemas import TravelContext, Suggestion
 
 logger = logging.getLogger(__name__)
 
