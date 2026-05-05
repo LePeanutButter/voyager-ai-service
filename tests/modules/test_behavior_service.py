@@ -30,8 +30,8 @@ async def test_analyze_insufficient_data_returns_empty(svc: BehaviorAnalysisServ
             interaction_type=InteractionType.CLICK,
         )
     )
-    out = await svc.analyze_behavior(BehaviorAnalysisRequest(user_id="u2", analysis_period_days=7))
-    assert out.confidence_score == 0.0
+    out = svc.analyze_behavior(BehaviorAnalysisRequest(user_id="u2", analysis_period_days=7))
+    assert out.confidence_score == pytest.approx(0.0)
 
 
 @pytest.mark.asyncio
@@ -53,7 +53,7 @@ async def test_analyze_tracks_rejections(svc: BehaviorAnalysisService):
                 activity_category="cultural",
             )
         )
-    out = await svc.analyze_behavior(BehaviorAnalysisRequest(user_id=uid, analysis_period_days=30))
+    out = svc.analyze_behavior(BehaviorAnalysisRequest(user_id=uid, analysis_period_days=30))
     assert out.user_id == uid
     assert out.confidence_score >= 0.0
 

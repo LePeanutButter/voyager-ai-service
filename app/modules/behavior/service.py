@@ -12,6 +12,7 @@ Dependencies:
 """
 
 from typing import List, Dict, Any, Optional, Tuple
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict, Counter
@@ -73,6 +74,7 @@ class BehaviorAnalysisService:
         Returns:
             ``True`` on success, ``False`` on unexpected error.
         """
+        await asyncio.sleep(0)
         try:
             user_id = request.user_id
             
@@ -110,7 +112,7 @@ class BehaviorAnalysisService:
             logger.error(f"Error tracking interaction: {str(e)}")
             return False
     
-    async def analyze_behavior(self, request: BehaviorAnalysisRequest) -> ImplicitPreferenceUpdate:
+    def analyze_behavior(self, request: BehaviorAnalysisRequest) -> ImplicitPreferenceUpdate:
         """Runs pattern detection and preference scoring over the analysis window.
 
         Args:
@@ -145,12 +147,12 @@ class BehaviorAnalysisService:
             # Detect patterns
             patterns = []
             if request.include_patterns:
-                patterns = await self._detect_behavior_patterns(recent_interactions)
+                patterns = self._detect_behavior_patterns(recent_interactions)
             
             # Calculate preference updates
             preference_changes = {}
             if request.include_preference_updates:
-                preference_changes = await self._calculate_preference_updates(recent_interactions, patterns)
+                preference_changes = self._calculate_preference_updates(recent_interactions, patterns)
             
             # Create analysis period
             analysis_period = DateRange(
@@ -176,7 +178,7 @@ class BehaviorAnalysisService:
             logger.error(f"Error analyzing behavior for user {request.user_id}: {str(e)}")
             raise
     
-    async def _detect_behavior_patterns(self, interactions: List[Dict]) -> List[BehaviorPattern]:
+    def _detect_behavior_patterns(self, interactions: List[Dict]) -> List[BehaviorPattern]:
         """Runs rejection, preference, time, and budget pattern detectors.
 
         Args:
@@ -329,7 +331,7 @@ class BehaviorAnalysisService:
         
         return patterns
     
-    async def _calculate_preference_updates(self, interactions: List[Dict], patterns: List[BehaviorPattern]) -> Dict[str, float]:
+    def _calculate_preference_updates(self, interactions: List[Dict], patterns: List[BehaviorPattern]) -> Dict[str, float]:
         """Aggregates weighted category scores and applies pattern-based adjustments."""
         preference_updates = {}
         
@@ -389,7 +391,7 @@ class BehaviorAnalysisService:
             confidence_score=0.0
         )
     
-    async def get_user_behavior_summary(self, user_id: str, days: int = 30) -> Dict[str, Any]:
+    def get_user_behavior_summary(self, user_id: str, days: int = 30) -> Dict[str, Any]:
         """Returns interaction breakdowns and recent patterns for dashboards.
 
         Args:

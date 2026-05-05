@@ -81,7 +81,7 @@ async def analyze_user_behavior(
         HTTPException: 400 on invalid parameters; 500 on internal error.
     """
     try:
-        result = await service.analyze_behavior(body)
+        result = service.analyze_behavior(body)
         logger.info("Behavior analysis completed for user %s", body.user_id)
         return result
     except ValueError as e:
@@ -115,7 +115,7 @@ async def get_behavior_summary(
         HTTPException: 404 if the service embeds an error in the payload; 500 on failure.
     """
     try:
-        summary = await service.get_user_behavior_summary(user_id, days)
+        summary = service.get_user_behavior_summary(user_id, days)
         if "error" in summary:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=summary["error"])
         return summary
@@ -194,7 +194,7 @@ async def get_detected_patterns(
             include_patterns=True,
             include_preference_updates=False,
         )
-        result = await service.analyze_behavior(req)
+        result = service.analyze_behavior(req)
         return {
             "user_id": user_id,
             "analysis_period": result.analysis_period.model_dump(),

@@ -417,8 +417,8 @@
           "request": {
             "method": "PUT",
             "header": [],
-            "url": "{{baseUrl}}/matching/connections/conn_placeholder/respond?response=accept",
-            "description": "Sustituir `conn_placeholder` por `connection_id` devuelto al conectar."
+            "url": "{{baseUrl}}/matching/connections/{{connection_id}}/respond?response=accept",
+            "description": ""
           },
           "response": []
         },

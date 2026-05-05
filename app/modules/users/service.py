@@ -46,7 +46,7 @@ class UserService:
         self.user_profiles = {}  # In-memory storage (replace with database in production)
         self.interactions = {}  # Store user interactions
     
-    async def create_user_profile(self, profile: UserProfile) -> UserProfile:
+    def create_user_profile(self, profile: UserProfile) -> UserProfile:
         """Persists a new profile after validation and preference analysis.
 
         Args:
@@ -70,7 +70,7 @@ class UserService:
                 raise ValueError("Invalid email format")
             
             # Analyze preferences using ML model
-            analyzed_preferences = await self._analyze_preferences(profile.preferences)
+            analyzed_preferences = self._analyze_preferences(profile.preferences)
             
             # Create enhanced profile
             enhanced_profile = UserProfile(
@@ -98,7 +98,7 @@ class UserService:
             logger.error(f"Error creating user profile: {str(e)}")
             raise
     
-    async def get_user_profile(self, user_id: str) -> Optional[UserProfile]:
+    def get_user_profile(self, user_id: str) -> Optional[UserProfile]:
         """Fetches a profile by id.
 
         Args:
@@ -113,7 +113,7 @@ class UserService:
             logger.error(f"Error fetching user profile: {str(e)}")
             return None
     
-    async def update_user_profile(self, user_id: str, profile_update: UserProfileUpdate) -> Optional[UserProfile]:
+    def update_user_profile(self, user_id: str, profile_update: UserProfileUpdate) -> Optional[UserProfile]:
         """Merges partial updates; re-runs preference analysis when preferences change.
 
         Args:
@@ -133,7 +133,7 @@ class UserService:
             
             # Update fields
             if profile_update.preferences:
-                analyzed_preferences = await self._analyze_preferences(profile_update.preferences)
+                analyzed_preferences = self._analyze_preferences(profile_update.preferences)
                 existing_profile.preferences = analyzed_preferences
             
             if profile_update.location:
@@ -154,7 +154,7 @@ class UserService:
             logger.error(f"Error updating user profile: {str(e)}")
             return None
     
-    async def update_user_preferences(self, user_id: str, preferences: UserPreferences) -> bool:
+    def update_user_preferences(self, user_id: str, preferences: UserPreferences) -> bool:
         """Replaces the user's ``UserPreferences`` block after analysis.
 
         Args:
@@ -173,7 +173,7 @@ class UserService:
                 return False
             
             # Analyze and update preferences
-            analyzed_preferences = await self._analyze_preferences(preferences)
+            analyzed_preferences = self._analyze_preferences(preferences)
             existing_profile.preferences = analyzed_preferences
             existing_profile.updated_at = datetime.now(timezone.utc)
             
@@ -187,7 +187,7 @@ class UserService:
             logger.error(f"Error updating user preferences: {str(e)}")
             return False
     
-    async def record_interaction(self, interaction: UserInteraction):
+    def record_interaction(self, interaction: UserInteraction):
         """Appends an interaction and triggers a preference-learning hook.
 
         Args:
@@ -206,7 +206,7 @@ class UserService:
             self.interactions[interaction.user_id].append(interaction)
             
             # Update user preferences based on interaction
-            await self._update_preferences_from_interaction(interaction)
+            self._update_preferences_from_interaction(interaction)
             
             # Limit interaction history
             max_interactions = 1000
@@ -217,7 +217,7 @@ class UserService:
             logger.error(f"Error recording interaction: {str(e)}")
             raise
     
-    async def get_interaction_history(self, user_id: str, limit: int) -> List[UserInteraction]:
+    def get_interaction_history(self, user_id: str, limit: int) -> List[UserInteraction]:
         """Returns the most recent interactions, optionally capped.
 
         Args:
@@ -234,7 +234,7 @@ class UserService:
             logger.error(f"Error fetching interaction history: {str(e)}")
             return []
     
-    async def generate_user_insights(self, user_id: str) -> Optional[Dict[str, Any]]:
+    def generate_user_insights(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Builds a dashboard-oriented summary from profile and interaction history.
 
         Args:
@@ -255,10 +255,10 @@ class UserService:
             interactions = self.interactions.get(user_id, [])
             
             # Analyze preferences
-            preference_analysis = await self._analyze_preference_patterns(profile.preferences)
+            preference_analysis = self._analyze_preference_patterns(profile.preferences)
             
             # Analyze behavior patterns
-            behavior_analysis = await self._analyze_behavior_patterns(interactions)
+            behavior_analysis = self._analyze_behavior_patterns(interactions)
             
             # Generate recommendations
             insights = {
@@ -284,7 +284,7 @@ class UserService:
             logger.error(f"Error generating user insights: {str(e)}")
             return None
     
-    async def delete_user_profile(self, user_id: str) -> bool:
+    def delete_user_profile(self, user_id: str) -> bool:
         """Removes profile and interaction rows for the user.
 
         Args:
@@ -313,7 +313,7 @@ class UserService:
     
     # Private helper methods
     
-    async def _analyze_preferences(self, preferences: UserPreferences) -> UserPreferences:
+    def _analyze_preferences(self, preferences: UserPreferences) -> UserPreferences:
         """Fills sensible defaults and placeholder enrichment for preferences.
 
         Args:
@@ -342,7 +342,7 @@ class UserService:
             logger.error(f"Error analyzing preferences: {str(e)}")
             return preferences
     
-    async def _update_preferences_from_interaction(self, interaction: UserInteraction):
+    def _update_preferences_from_interaction(self, interaction: UserInteraction):
         """Hook for future online learning; currently logs only.
 
         Args:
@@ -362,7 +362,7 @@ class UserService:
         except Exception as e:
             logger.error(f"Error updating preferences from interaction: {str(e)}")
     
-    async def _analyze_preference_patterns(self, preferences: UserPreferences) -> Dict[str, Any]:
+    def _analyze_preference_patterns(self, preferences: UserPreferences) -> Dict[str, Any]:
         """Derives a compact preference summary for insight payloads."""
         preference_list = preferences.preferences or []
         
@@ -373,7 +373,7 @@ class UserService:
             'preference_diversity': len(preference_list)
         }
     
-    async def _analyze_behavior_patterns(self, interactions: List[UserInteraction]) -> Dict[str, Any]:
+    def _analyze_behavior_patterns(self, interactions: List[UserInteraction]) -> Dict[str, Any]:
         """Computes engagement and coarse behavioral stats from stored interactions."""
         if not interactions:
             return {

@@ -14,6 +14,7 @@ Dependencies:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
@@ -117,6 +118,7 @@ class TrendsService:
 
     async def refresh(self) -> None:
         """Recomputes emerging flags from mock seed and configuration thresholds."""
+        await asyncio.sleep(0)
         window = settings.TREND_ANALYSIS_WINDOW_DAYS
         threshold = settings.TREND_EMERGENCE_SURGE_RATIO
         emerging: List[EmergingDestinationTrend] = []

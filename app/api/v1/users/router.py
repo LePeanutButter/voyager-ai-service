@@ -21,9 +21,17 @@ from app.modules.users.schemas import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+USER_PROFILE_NOT_FOUND = "User profile not found"
 
 
-@router.post("/profile", response_model=UserProfile)
+@router.post(
+    "/profile",
+    response_model=UserProfile,
+    responses={
+        400: {"description": "Invalid user profile payload"},
+        500: {"description": "Failed to create user profile"},
+    },
+)
 async def create_user_profile(
     profile: UserProfile,
     service: UserServiceDep,
@@ -42,7 +50,7 @@ async def create_user_profile(
     """
     try:
         logger.info("Creating profile for user %s", profile.user_id)
-        created_profile = await service.create_user_profile(profile)
+        created_profile = service.create_user_profile(profile)
         logger.info("Successfully created profile for user %s", profile.user_id)
         return created_profile
     except ValueError as e:
@@ -53,7 +61,14 @@ async def create_user_profile(
         raise HTTPException(status_code=500, detail="Failed to create user profile")
 
 
-@router.get("/profile/{user_id}", response_model=UserProfile)
+@router.get(
+    "/profile/{user_id}",
+    response_model=UserProfile,
+    responses={
+        404: {"description": "User profile not found"},
+        500: {"description": "Failed to fetch user profile"},
+    },
+)
 async def get_user_profile(user_id: str, service: UserServiceDep):
     """Fetches a profile by identifier.
 
@@ -69,9 +84,9 @@ async def get_user_profile(user_id: str, service: UserServiceDep):
     """
     try:
         logger.info("Fetching profile for user %s", user_id)
-        profile = await service.get_user_profile(user_id)
+        profile = service.get_user_profile(user_id)
         if not profile:
-            raise HTTPException(status_code=404, detail="User profile not found")
+            raise HTTPException(status_code=404, detail=USER_PROFILE_NOT_FOUND)
         return profile
     except HTTPException:
         raise
@@ -80,7 +95,15 @@ async def get_user_profile(user_id: str, service: UserServiceDep):
         raise HTTPException(status_code=500, detail="Failed to fetch user profile")
 
 
-@router.put("/profile/{user_id}", response_model=UserProfile)
+@router.put(
+    "/profile/{user_id}",
+    response_model=UserProfile,
+    responses={
+        400: {"description": "Invalid update payload"},
+        404: {"description": "User profile not found"},
+        500: {"description": "Failed to update user profile"},
+    },
+)
 async def update_user_profile(
     user_id: str,
     profile_update: UserProfileUpdate,
@@ -101,9 +124,9 @@ async def update_user_profile(
     """
     try:
         logger.info("Updating profile for user %s", user_id)
-        updated_profile = await service.update_user_profile(user_id, profile_update)
+        updated_profile = service.update_user_profile(user_id, profile_update)
         if not updated_profile:
-            raise HTTPException(status_code=404, detail="User profile not found")
+            raise HTTPException(status_code=404, detail=USER_PROFILE_NOT_FOUND)
         logger.info("Successfully updated profile for user %s", user_id)
         return updated_profile
     except HTTPException:
@@ -116,7 +139,13 @@ async def update_user_profile(
         raise HTTPException(status_code=500, detail="Failed to update user profile")
 
 
-@router.post("/preferences/{user_id}")
+@router.post(
+    "/preferences/{user_id}",
+    responses={
+        404: {"description": "User profile not found"},
+        500: {"description": "Failed to update user preferences"},
+    },
+)
 async def update_user_preferences(
     user_id: str,
     preferences: UserPreferences,
@@ -137,9 +166,9 @@ async def update_user_preferences(
     """
     try:
         logger.info("Updating preferences for user %s", user_id)
-        success = await service.update_user_preferences(user_id, preferences)
+        success = service.update_user_preferences(user_id, preferences)
         if not success:
-            raise HTTPException(status_code=404, detail="User profile not found")
+            raise HTTPException(status_code=404, detail=USER_PROFILE_NOT_FOUND)
         return {"message": "Preferences updated successfully", "user_id": user_id}
     except HTTPException:
         raise
@@ -148,7 +177,10 @@ async def update_user_preferences(
         raise HTTPException(status_code=500, detail="Failed to update user preferences")
 
 
-@router.post("/interaction")
+@router.post(
+    "/interaction",
+    responses={500: {"description": "Failed to record interaction"}},
+)
 async def record_user_interaction(interaction: UserInteraction, service: UserServiceDep):
     """Records an interaction (click, view, etc.) for learning or analytics.
 
@@ -164,14 +196,17 @@ async def record_user_interaction(interaction: UserInteraction, service: UserSer
     """
     try:
         logger.info("Recording interaction for user %s", interaction.user_id)
-        await service.record_interaction(interaction)
+        service.record_interaction(interaction)
         return {"message": "Interaction recorded successfully", "interaction_id": interaction.user_id}
     except Exception as e:
         logger.error("Error recording interaction: %s", e)
         raise HTTPException(status_code=500, detail="Failed to record interaction")
 
 
-@router.get("/history/{user_id}")
+@router.get(
+    "/history/{user_id}",
+    responses={500: {"description": "Failed to fetch interaction history"}},
+)
 async def get_user_interaction_history(
     user_id: str,
     service: UserServiceDep,
@@ -192,14 +227,20 @@ async def get_user_interaction_history(
     """
     try:
         logger.info("Fetching interaction history for user %s", user_id)
-        history = await service.get_interaction_history(user_id, limit)
+        history = service.get_interaction_history(user_id, limit)
         return {"user_id": user_id, "interactions": history, "total_count": len(history)}
     except Exception as e:
         logger.error("Error fetching interaction history: %s", e)
         raise HTTPException(status_code=500, detail="Failed to fetch interaction history")
 
 
-@router.get("/insights/{user_id}")
+@router.get(
+    "/insights/{user_id}",
+    responses={
+        404: {"description": "User profile not found"},
+        500: {"description": "Failed to generate user insights"},
+    },
+)
 async def get_user_insights(user_id: str, service: UserServiceDep):
     """Builds a summary of behavior or inferred preferences.
 
@@ -214,10 +255,10 @@ async def get_user_insights(user_id: str, service: UserServiceDep):
         HTTPException: 404 if no profile or data; 500 on internal error.
     """
     try:
-        logger.info("Generating insights for user %s", user_id)
-        insights = await service.generate_user_insights(user_id)
+        logger.info("Generating user insights")
+        insights = service.generate_user_insights(user_id)
         if not insights:
-            raise HTTPException(status_code=404, detail="User profile not found")
+            raise HTTPException(status_code=404, detail=USER_PROFILE_NOT_FOUND)
         return insights
     except HTTPException:
         raise
@@ -226,7 +267,13 @@ async def get_user_insights(user_id: str, service: UserServiceDep):
         raise HTTPException(status_code=500, detail="Failed to generate user insights")
 
 
-@router.delete("/profile/{user_id}")
+@router.delete(
+    "/profile/{user_id}",
+    responses={
+        404: {"description": "User profile not found"},
+        500: {"description": "Failed to delete user profile"},
+    },
+)
 async def delete_user_profile(user_id: str, service: UserServiceDep):
     """Deletes the profile and related data per service implementation.
 
@@ -242,9 +289,9 @@ async def delete_user_profile(user_id: str, service: UserServiceDep):
     """
     try:
         logger.info("Deleting profile for user %s", user_id)
-        success = await service.delete_user_profile(user_id)
+        success = service.delete_user_profile(user_id)
         if not success:
-            raise HTTPException(status_code=404, detail="User profile not found")
+            raise HTTPException(status_code=404, detail=USER_PROFILE_NOT_FOUND)
         return {"message": "User profile deleted successfully", "user_id": user_id}
     except HTTPException:
         raise

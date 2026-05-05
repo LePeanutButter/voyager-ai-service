@@ -25,7 +25,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/find", response_model=MatchingResponse)
+@router.post(
+    "/find",
+    response_model=MatchingResponse,
+    responses={500: {"description": "Failed to find travel partners"}},
+)
 async def find_travel_partners(
     request_data: TravelerMatchRequest,
     service: MatchingServiceDep,
@@ -44,7 +48,7 @@ async def find_travel_partners(
     """
     try:
         logger.info("Finding travel partners for user %s", request_data.user_id)
-        matches = await service.find_travel_partners(request_data)
+        matches = service.find_travel_partners(request_data)
         logger.info("Found %s matches for user %s", len(matches.matches), request_data.user_id)
         return matches
     except Exception as e:
@@ -52,7 +56,13 @@ async def find_travel_partners(
         raise HTTPException(status_code=500, detail="Failed to find travel partners")
 
 
-@router.get("/compatibility/{user_id}/{target_user_id}")
+@router.get(
+    "/compatibility/{user_id}/{target_user_id}",
+    responses={
+        404: {"description": "One or both users not found"},
+        500: {"description": "Failed to calculate compatibility"},
+    },
+)
 async def get_compatibility_score(
     user_id: str,
     target_user_id: str,
@@ -84,7 +94,10 @@ async def get_compatibility_score(
         raise HTTPException(status_code=500, detail="Failed to calculate compatibility")
 
 
-@router.post("/connect/{user_id}/{target_user_id}")
+@router.post(
+    "/connect/{user_id}/{target_user_id}",
+    responses={500: {"description": "Failed to initiate connection"}},
+)
 async def initiate_connection(
     service: MatchingServiceDep,
     user_id: str,
@@ -107,7 +120,7 @@ async def initiate_connection(
     """
     try:
         logger.info("Initiating connection from %s to %s", user_id, target_user_id)
-        connection = await service.initiate_connection(user_id, target_user_id, message)
+        connection = service.initiate_connection(user_id, target_user_id, message)
         return {
             "message": "Connection request sent successfully",
             "connection_id": connection.get("connection_id"),
@@ -119,7 +132,10 @@ async def initiate_connection(
         raise HTTPException(status_code=500, detail="Failed to initiate connection")
 
 
-@router.get("/connections/{user_id}")
+@router.get(
+    "/connections/{user_id}",
+    responses={500: {"description": "Failed to fetch connections"}},
+)
 async def get_user_connections(
     user_id: str,
     service: MatchingServiceDep,
@@ -140,14 +156,21 @@ async def get_user_connections(
     """
     try:
         logger.info("Fetching connections for user %s", user_id)
-        connections = await service.get_user_connections(user_id, status)
+        connections = service.get_user_connections(user_id, status)
         return {"user_id": user_id, "connections": connections, "total_count": len(connections)}
     except Exception as e:
         logger.error("Error fetching connections: %s", e)
         raise HTTPException(status_code=500, detail="Failed to fetch connections")
 
 
-@router.put("/connections/{connection_id}/respond")
+@router.put(
+    "/connections/{connection_id}/respond",
+    responses={
+        400: {"description": "Response must be 'accept' or 'decline'"},
+        404: {"description": "Connection request not found"},
+        500: {"description": "Failed to respond to connection"},
+    },
+)
 async def respond_to_connection(
     connection_id: str,
     response: str,
@@ -172,7 +195,7 @@ async def respond_to_connection(
         if response not in ["accept", "decline"]:
             raise HTTPException(status_code=400, detail="Response must be 'accept' or 'decline'")
         logger.info("Responding to connection %s with %s", connection_id, response)
-        updated_connection = await service.respond_to_connection(connection_id, response, message)
+        updated_connection = service.respond_to_connection(connection_id, response, message)
         if not updated_connection:
             raise HTTPException(status_code=404, detail="Connection request not found")
         return {
@@ -187,7 +210,10 @@ async def respond_to_connection(
         raise HTTPException(status_code=500, detail="Failed to respond to connection")
 
 
-@router.get("/recommendations/{user_id}")
+@router.get(
+    "/recommendations/{user_id}",
+    responses={500: {"description": "Failed to get travel buddy recommendations"}},
+)
 async def get_travel_buddy_recommendations(
     user_id: str,
     service: MatchingServiceDep,
@@ -210,7 +236,7 @@ async def get_travel_buddy_recommendations(
     """
     try:
         logger.info("Getting travel buddy recommendations for user %s", user_id)
-        recommendations = await service.get_travel_buddy_recommendations(user_id, location, limit)
+        recommendations = service.get_travel_buddy_recommendations(user_id, location, limit)
         return {
             "user_id": user_id,
             "recommendations": recommendations,
@@ -221,7 +247,11 @@ async def get_travel_buddy_recommendations(
         raise HTTPException(status_code=500, detail="Failed to get travel buddy recommendations")
 
 
-@router.post("/learning/connection-outcome", response_model=ConnectionOutcomeResponse)
+@router.post(
+    "/learning/connection-outcome",
+    response_model=ConnectionOutcomeResponse,
+    responses={500: {"description": "Failed to record connection outcome"}},
+)
 async def submit_connection_outcome(
     body: ConnectionOutcomeRequest,
     service: MatchingServiceDep,
@@ -239,7 +269,7 @@ async def submit_connection_outcome(
         HTTPException: 500 on persist or compute error.
     """
     try:
-        weights = await service.process_connection_outcome(
+        weights = service.process_connection_outcome(
             body.user_id,
             body.target_user_id,
             body.outcome,
@@ -252,7 +282,13 @@ async def submit_connection_outcome(
         raise HTTPException(status_code=500, detail="Failed to record connection outcome")
 
 
-@router.post("/feedback/{user_id}/{target_user_id}")
+@router.post(
+    "/feedback/{user_id}/{target_user_id}",
+    responses={
+        400: {"description": "Rating must be between 1 and 5"},
+        500: {"description": "Failed to record match feedback"},
+    },
+)
 async def submit_match_feedback(
     user_id: str,
     target_user_id: str,
@@ -279,7 +315,7 @@ async def submit_match_feedback(
         if rating < 1 or rating > 5:
             raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
         logger.info("Recording match feedback from %s for %s", user_id, target_user_id)
-        await service.record_match_feedback(user_id, target_user_id, rating, feedback_text)
+        service.record_match_feedback(user_id, target_user_id, rating, feedback_text)
         return {
             "message": "Match feedback recorded successfully",
             "user_id": user_id,

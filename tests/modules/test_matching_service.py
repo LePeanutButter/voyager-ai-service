@@ -1,5 +1,6 @@
 """Unit tests for app.modules.matching.service.MatchingService."""
 
+import asyncio
 import pytest
 
 from app.ml.learning_store import MatchingLearningStore
@@ -15,6 +16,7 @@ class _FakeModel:
         self.raise_on_predict = raise_on_predict
 
     async def predict(self, payload):
+        await asyncio.sleep(0)
         if self.raise_on_predict:
             raise RuntimeError("model fail")
         return {"compatibility_score": 0.82}
@@ -52,7 +54,7 @@ async def test_find_travel_partners_happy_path(svc_no_ml):
         preferences=[TravelPreference.CULTURAL],
         max_matches=2,
     )
-    resp = await svc_no_ml.find_travel_partners(req)
+    resp = svc_no_ml.find_travel_partners(req)
     assert resp.user_id == "user1"
     assert resp.total_matches <= 2
 
@@ -62,7 +64,7 @@ async def test_find_travel_partners_unknown_user_raises(svc_no_ml):
     loc = Location(latitude=0.0, longitude=0.0)
     req = TravelerMatchRequest(user_id="unknown", location=loc)
     with pytest.raises(ValueError, match="not found"):
-        await svc_no_ml.find_travel_partners(req)
+        svc_no_ml.find_travel_partners(req)
 
 
 @pytest.mark.asyncio
@@ -81,49 +83,49 @@ async def test_calculate_compatibility_missing_user(svc_no_ml):
 
 @pytest.mark.asyncio
 async def test_connection_flow(svc_no_ml):
-    c = await svc_no_ml.initiate_connection("user1", "user2", message="hi")
+    c = svc_no_ml.initiate_connection("user1", "user2", message="hi")
     assert c["status"] == "pending"
     cid = c["connection_id"]
-    updated = await svc_no_ml.respond_to_connection(cid, "accepted", message="ok")
+    updated = svc_no_ml.respond_to_connection(cid, "accepted", message="ok")
     assert updated["status"] == "accepted"
-    conns = await svc_no_ml.get_user_connections("user1", status="accepted")
+    conns = svc_no_ml.get_user_connections("user1", status="accepted")
     assert len(conns) == 1
 
 
 @pytest.mark.asyncio
 async def test_get_user_connections_filter_and_sort(svc_no_ml):
-    await svc_no_ml.initiate_connection("user1", "user2")
-    await svc_no_ml.initiate_connection("user1", "user3")
-    all_c = await svc_no_ml.get_user_connections("user1")
+    svc_no_ml.initiate_connection("user1", "user2")
+    svc_no_ml.initiate_connection("user1", "user3")
+    all_c = svc_no_ml.get_user_connections("user1")
     assert len(all_c) >= 2
-    pending = await svc_no_ml.get_user_connections("user1", status="pending")
+    pending = svc_no_ml.get_user_connections("user1", status="pending")
     assert all(x["status"] == "pending" for x in pending)
 
 
 @pytest.mark.asyncio
 async def test_respond_missing_returns_none(svc_no_ml):
-    assert await svc_no_ml.respond_to_connection("conn_x", "declined") is None
+    assert svc_no_ml.respond_to_connection("conn_x", "declined") is None
 
 
 @pytest.mark.asyncio
 async def test_get_travel_buddy_recommendations(svc_no_ml):
-    recs = await svc_no_ml.get_travel_buddy_recommendations("user1", location="San Francisco")
+    recs = svc_no_ml.get_travel_buddy_recommendations("user1", location="San Francisco")
     assert isinstance(recs, list)
 
 
 @pytest.mark.asyncio
 async def test_get_travel_buddy_unknown_user(svc_no_ml):
-    assert await svc_no_ml.get_travel_buddy_recommendations("nope") == []
+    assert svc_no_ml.get_travel_buddy_recommendations("nope") == []
 
 
 @pytest.mark.asyncio
 async def test_record_match_feedback(svc_no_ml):
-    await svc_no_ml.record_match_feedback("user1", "user2", 4, feedback_text="great")
+    svc_no_ml.record_match_feedback("user1", "user2", 4, feedback_text="great")
 
 
 @pytest.mark.asyncio
 async def test_process_connection_outcome_success(svc_no_ml):
-    w = await svc_no_ml.process_connection_outcome(
+    w = svc_no_ml.process_connection_outcome(
         "user1", "user2", ConnectionOutcome.SUCCESS, dimension_snapshot={"interests": 0.8}
     )
     assert isinstance(w, dict)
@@ -132,7 +134,7 @@ async def test_process_connection_outcome_success(svc_no_ml):
 
 @pytest.mark.asyncio
 async def test_process_connection_outcome_incompatible(svc_no_ml):
-    w = await svc_no_ml.process_connection_outcome(
+    w = svc_no_ml.process_connection_outcome(
         "user1", "user2", ConnectionOutcome.INCOMPATIBLE, dimension_snapshot={"interests": 0.6}
     )
     assert isinstance(w, dict)
@@ -153,27 +155,27 @@ async def test_matching_model_signal_fallback_on_error(svc_with_ml, learning_sto
 
 @pytest.mark.asyncio
 async def test_generate_multidimensional_explanation_branches(svc_no_ml):
-    low = {k: 0.1 for k in ("interests", "travel_style", "budget", "pace", "personality")}
-    text = await svc_no_ml._generate_multidimensional_explanation(low, svc_no_ml.learning_store.get_weights())
+    low = dict.fromkeys(("interests", "travel_style", "budget", "pace", "personality"), 0.1)
+    text = svc_no_ml._generate_multidimensional_explanation(low, svc_no_ml.learning_store.get_weights())
     assert "moderada" in text or "Compatibilidad" in text
 
     high = {"interests": 0.9, "travel_style": 0.2, "budget": 0.1, "pace": 0.1, "personality": 0.1}
-    text2 = await svc_no_ml._generate_multidimensional_explanation(high, svc_no_ml.learning_store.get_weights())
+    text2 = svc_no_ml._generate_multidimensional_explanation(high, svc_no_ml.learning_store.get_weights())
     assert "alineación" in text2 or "%" in text2
 
 
 @pytest.mark.asyncio
 async def test_preference_compatibility_empty_sets(svc_no_ml):
-    out = await svc_no_ml._calculate_preference_compatibility([], [TravelPreference.CULTURAL])
-    assert out["score"] == 0.0
+    out = svc_no_ml._calculate_preference_compatibility([], [TravelPreference.CULTURAL])
+    assert out["score"] == pytest.approx(0.0)
 
 
 @pytest.mark.asyncio
 async def test_demographic_age_branches(svc_no_ml):
     u1 = {"age": 30}
     u2 = {"age": 32}
-    d = await svc_no_ml._calculate_demographic_compatibility(u1, u2)
-    assert d["score"] == 1.0
+    d = svc_no_ml._calculate_demographic_compatibility(u1, u2)
+    assert d["score"] == pytest.approx(1.0)
 
-    d2 = await svc_no_ml._calculate_demographic_compatibility({"age": 20}, {"age": 40})
+    d2 = svc_no_ml._calculate_demographic_compatibility({"age": 20}, {"age": 40})
     assert d2["score"] <= 0.7

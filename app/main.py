@@ -11,6 +11,7 @@ Dependencies:
 
 from contextlib import asynccontextmanager
 import logging
+import os
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -115,7 +116,15 @@ async def root():
     }
 
 
-@app.get("/health")
+@app.get(
+    "/health",
+    responses={
+        503: {
+            "description": "Service unavailable",
+            "content": {"application/json": {"example": {"detail": "Service unavailable"}}},
+        }
+    },
+)
 async def health_check():
     """Checks process availability and whether ML models report ready.
 
@@ -143,9 +152,11 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
 
+    # Default to localhost for safer local execution; override in deployment if needed.
+    bind_host = os.getenv("UVICORN_HOST", "127.0.0.1")
     uvicorn.run(
         "app.main:app",
-        host="0.0.0.0",
+        host=bind_host,
         port=8000,
         reload=True,
         log_level="info",

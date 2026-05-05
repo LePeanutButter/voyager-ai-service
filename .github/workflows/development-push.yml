@@ -59,6 +59,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Run tests with coverage for Sonar
+        run: |
+          if [ -d "tests" ]; then
+            pytest --cov=app --cov-report=xml:coverage.xml
+          else
+            echo "No tests directory found; creating empty coverage.xml for Sonar."
+            printf '%s\n' '<?xml version="1.0" ?><coverage version="7.0.0" timestamp="0" lines-valid="0" lines-covered="0" line-rate="0" branches-valid="0" branches-covered="0" branch-rate="0" complexity="0"><sources><source>.</source></sources><packages></packages></coverage>' > coverage.xml
+          fi
+
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@v2
         env:

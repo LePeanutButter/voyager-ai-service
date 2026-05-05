@@ -12,7 +12,7 @@ class _BoomUserService:
     async def create_user_profile(self, *a, **k):
         raise RuntimeError("boom")
 
-    async def get_user_profile(self, *a, **k):
+    def get_user_profile(self, *a, **k):
         raise RuntimeError("boom")
 
     async def update_user_profile(self, *a, **k):
@@ -24,13 +24,13 @@ class _BoomUserService:
     async def record_interaction(self, *a, **k):
         raise RuntimeError("boom")
 
-    async def get_interaction_history(self, *a, **k):
+    def get_interaction_history(self, *a, **k):
         raise RuntimeError("boom")
 
     async def generate_user_insights(self, *a, **k):
         raise RuntimeError("boom")
 
-    async def delete_user_profile(self, *a, **k):
+    def delete_user_profile(self, *a, **k):
         raise RuntimeError("boom")
 
 

@@ -50,7 +50,7 @@ class MatchingService:
         self.connections = {}  # In-memory storage (replace with database in production)
         self.user_profiles = {}  # Mock user profiles for matching
     
-    async def find_travel_partners(self, request: TravelerMatchRequest) -> MatchingResponse:
+    def find_travel_partners(self, request: TravelerMatchRequest) -> MatchingResponse:
         """Scores candidates, filters by minimum compatibility, and returns ranked matches.
 
         Args:
@@ -67,22 +67,22 @@ class MatchingService:
             logger.info(f"Finding travel partners for user {request.user_id}")
             
             # Get user profile
-            user_profile = await self._get_user_profile(request.user_id)
+            user_profile = self._get_user_profile(request.user_id)
             if not user_profile:
                 raise ValueError(f"User profile {request.user_id} not found")
             
             # Get candidate travelers
-            candidate_travelers = await self._get_candidate_travelers(request)
+            candidate_travelers = self._get_candidate_travelers(request)
             
             # Calculate compatibility scores
-            scored_matches = await self._calculate_compatibility_scores(
+            scored_matches = self._calculate_compatibility_scores(
                 user_profile, 
                 candidate_travelers, 
                 request
             )
             
             # Apply filtering and ranking
-            final_matches = await self._apply_matching_filters(
+            final_matches = self._apply_matching_filters(
                 scored_matches, 
                 request.max_matches
             )
@@ -117,31 +117,31 @@ class MatchingService:
             or ``None`` if either profile is missing or on error.
         """
         try:
-            logger.info(f"Calculating compatibility between {user_id} and {target_user_id}")
+            logger.info("Calculating compatibility between two users")
             
             # Get user profiles
-            user_profile = await self._get_user_profile(user_id)
-            target_profile = await self._get_user_profile(target_user_id)
+            user_profile = self._get_user_profile(user_id)
+            target_profile = self._get_user_profile(target_user_id)
             
             if not user_profile or not target_profile:
                 return None
             
             # PBI 26: multidimensional scores (interests, estilo, presupuesto, ritmo, personalidad)
-            dimensions = await self._compute_match_dimensions(user_profile, target_profile)
+            dimensions = self._compute_match_dimensions(user_profile, target_profile)
             weights = self.learning_store.get_weights()
             overall_score = sum(
                 dimensions.get(dim, 0.0) * weights.get(dim, 0.0) for dim in weights
             )
             overall_score = min(1.0, max(0.0, overall_score))
 
-            preference_compatibility = await self._calculate_preference_compatibility(
+            preference_compatibility = self._calculate_preference_compatibility(
                 user_profile.get('preferences', []),
                 target_profile.get('preferences', []),
             )
-            travel_style_compatibility = await self._calculate_travel_style_compatibility(
+            travel_style_compatibility = self._calculate_travel_style_compatibility(
                 user_profile, target_profile
             )
-            demographic_compatibility = await self._calculate_demographic_compatibility(
+            demographic_compatibility = self._calculate_demographic_compatibility(
                 user_profile, target_profile
             )
 
@@ -157,7 +157,7 @@ class MatchingService:
                 'travel_style_compatibility': travel_style_compatibility,
                 'demographic_compatibility': demographic_compatibility,
                 'common_preferences': preference_compatibility['common_preferences'],
-                'recommendation_reason': await self._generate_multidimensional_explanation(
+                'recommendation_reason': self._generate_multidimensional_explanation(
                     dimensions, weights
                 ),
                 'calculated_at': datetime.now(timezone.utc),
@@ -169,7 +169,7 @@ class MatchingService:
             logger.error(f"Error calculating compatibility: {str(e)}")
             return None
     
-    async def initiate_connection(self, user_id: str, target_user_id: str, message: Optional[str] = None) -> Dict[str, Any]:
+    def initiate_connection(self, user_id: str, target_user_id: str, message: Optional[str] = None) -> Dict[str, Any]:
         """Creates a pending connection record with timestamps.
 
         Args:
@@ -208,7 +208,7 @@ class MatchingService:
             logger.error(f"Error initiating connection: {str(e)}")
             raise
     
-    async def get_user_connections(self, user_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_user_connections(self, user_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
         """Lists connections where the user is initiator or target, newest first.
 
         Args:
@@ -239,7 +239,7 @@ class MatchingService:
             logger.error(f"Error fetching connections: {str(e)}")
             return []
     
-    async def respond_to_connection(self, connection_id: str, response: str, message: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def respond_to_connection(self, connection_id: str, response: str, message: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Updates status and optional response message for a connection.
 
         Args:
@@ -270,7 +270,7 @@ class MatchingService:
             logger.error(f"Error responding to connection: {str(e)}")
             return None
     
-    async def get_travel_buddy_recommendations(self, user_id: str, location: Optional[str] = None, limit: int = 10) -> List[TravelerMatch]:
+    def get_travel_buddy_recommendations(self, user_id: str, location: Optional[str] = None, limit: int = 10) -> List[TravelerMatch]:
         """Ranks all mock users by simple compatibility, optionally by location.
 
         Args:
@@ -282,15 +282,15 @@ class MatchingService:
             Sorted ``TravelerMatch`` list, possibly empty if profile missing or on error.
         """
         try:
-            logger.info(f"Getting travel buddy recommendations for user {user_id}")
+            logger.info("Getting travel buddy recommendations")
             
             # Get user profile
-            user_profile = await self._get_user_profile(user_id)
+            user_profile = self._get_user_profile(user_id)
             if not user_profile:
                 return []
             
             # Get all potential matches
-            all_users = await self._get_all_users()
+            all_users = self._get_all_users()
             
             # Calculate compatibility scores
             recommendations = []
@@ -302,7 +302,7 @@ class MatchingService:
                 if location and user_data.get('location') != location:
                     continue
                 
-                compatibility = await self._calculate_simple_compatibility(
+                compatibility = self._calculate_simple_compatibility(
                     user_profile, 
                     user_data
                 )
@@ -329,7 +329,7 @@ class MatchingService:
             logger.error(f"Error getting travel buddy recommendations: {str(e)}")
             return []
     
-    async def record_match_feedback(self, user_id: str, target_user_id: str, rating: int, feedback_text: Optional[str] = None):
+    def record_match_feedback(self, user_id: str, target_user_id: str, rating: int, feedback_text: Optional[str] = None):
         """Logs qualitative feedback and nudges learned weights from numeric rating.
 
         Args:
@@ -344,19 +344,12 @@ class MatchingService:
         try:
             logger.info(f"Recording match feedback from {user_id} for {target_user_id}")
             
-            feedback_data = {
-                'user_id': user_id,
-                'target_user_id': target_user_id,
-                'rating': rating,
-                'feedback_text': feedback_text,
-                'timestamp': datetime.now(timezone.utc)
-            }
-            
             # In production, store in database and use for model improvement
-            logger.info(f"Match feedback recorded: {feedback_data}")
+            _ = feedback_text
+            logger.info("Match feedback recorded with rating %s", rating)
             
             # Update matching algorithms based on feedback
-            await self._update_matching_algorithm(user_id, target_user_id, rating)
+            self._update_matching_algorithm(user_id, target_user_id, rating)
             
         except Exception as e:
             logger.error(f"Error recording match feedback: {str(e)}")
@@ -364,7 +357,7 @@ class MatchingService:
     
     # Private helper methods
     
-    async def _get_user_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
+    def _get_user_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Resolves a traveler dict from the embedded mock catalog."""
         # Mock implementation - in production, query database
         mock_profiles = {
@@ -408,10 +401,10 @@ class MatchingService:
         
         return mock_profiles.get(user_id)
     
-    async def _get_candidate_travelers(self, request: TravelerMatchRequest) -> List[Dict[str, Any]]:
+    def _get_candidate_travelers(self, request: TravelerMatchRequest) -> List[Dict[str, Any]]:
         """Returns all mock users except the requester, with optional location presence filter."""
         # Mock implementation - in production, query database with filters
-        all_users = await self._get_all_users()
+        all_users = self._get_all_users()
         
         # Filter out the requesting user
         candidates = [user for user in all_users if user['user_id'] != request.user_id]
@@ -422,7 +415,7 @@ class MatchingService:
         
         return candidates
     
-    async def _get_all_users(self) -> List[Dict[str, Any]]:
+    def _get_all_users(self) -> List[Dict[str, Any]]:
         """Full mock roster used by buddy recommendations and candidate expansion."""
         return [
             {
@@ -466,12 +459,12 @@ class MatchingService:
             },
         ]
     
-    async def _calculate_compatibility_scores(self, user_profile: Dict[str, Any], candidates: List[Dict[str, Any]], request: TravelerMatchRequest) -> List[Dict[str, Any]]:
+    def _calculate_compatibility_scores(self, user_profile: Dict[str, Any], candidates: List[Dict[str, Any]], request: TravelerMatchRequest) -> List[Dict[str, Any]]:
         """Scores each candidate, boosts overlap with requested preferences, and attaches commons."""
         scored_candidates = []
         
         for candidate in candidates:
-            compatibility_score = await self._calculate_simple_compatibility(user_profile, candidate)
+            compatibility_score = self._calculate_simple_compatibility(user_profile, candidate)
             if request.preferences:
                 req_p = {p.value for p in request.preferences}
                 cand_p = {p.value for p in candidate.get("preferences", [])}
@@ -480,7 +473,7 @@ class MatchingService:
 
             candidate_data = candidate.copy()
             candidate_data['compatibility_score'] = compatibility_score
-            candidate_data['common_preferences'] = await self._get_common_preferences(
+            candidate_data['common_preferences'] = self._get_common_preferences(
                 user_profile.get('preferences', []), 
                 candidate.get('preferences', [])
             )
@@ -489,22 +482,22 @@ class MatchingService:
         
         return scored_candidates
     
-    async def _calculate_simple_compatibility(self, user1: Dict[str, Any], user2: Dict[str, Any]) -> float:
+    def _calculate_simple_compatibility(self, user1: Dict[str, Any], user2: Dict[str, Any]) -> float:
         """Weighted sum of PBI 26 dimensions using ``learning_store`` weights (clamped to 1.0)."""
-        dimensions = await self._compute_match_dimensions(user1, user2)
+        dimensions = self._compute_match_dimensions(user1, user2)
         weights = self.learning_store.get_weights()
         return min(
             1.0,
             sum(dimensions.get(k, 0.0) * weights.get(k, 0.0) for k in weights),
         )
     
-    async def _get_common_preferences(self, prefs1: List[TravelPreference], prefs2: List[TravelPreference]) -> List[TravelPreference]:
+    def _get_common_preferences(self, prefs1: List[TravelPreference], prefs2: List[TravelPreference]) -> List[TravelPreference]:
         """Intersection of two preference lists as a stable list."""
         set1 = set(prefs1)
         set2 = set(prefs2)
         return list(set1.intersection(set2))
     
-    async def _apply_matching_filters(self, scored_candidates: List[Dict[str, Any]], max_matches: int) -> List[TravelerMatch]:
+    def _apply_matching_filters(self, scored_candidates: List[Dict[str, Any]], max_matches: int) -> List[TravelerMatch]:
         """Drops below-threshold scores, sorts descending, and maps to ``TravelerMatch``."""
         # Filter by minimum compatibility score
         filtered_candidates = [
@@ -532,7 +525,7 @@ class MatchingService:
         
         return matches
     
-    async def _calculate_preference_compatibility(self, prefs1: List[TravelPreference], prefs2: List[TravelPreference]) -> Dict[str, Any]:
+    def _calculate_preference_compatibility(self, prefs1: List[TravelPreference], prefs2: List[TravelPreference]) -> Dict[str, Any]:
         """Jaccard-style overlap on enumerated travel preferences."""
         set1 = set(prefs1)
         set2 = set(prefs2)
@@ -550,7 +543,7 @@ class MatchingService:
             'total_unique': len(set1.union(set2))
         }
     
-    async def _calculate_travel_style_compatibility(self, user1: Dict[str, Any], user2: Dict[str, Any]) -> Dict[str, Any]:
+    def _calculate_travel_style_compatibility(self, user1: Dict[str, Any], user2: Dict[str, Any]) -> Dict[str, Any]:
         """Binary style match (1.0 equal, 0.5 otherwise) with echo fields."""
         style1 = user1.get('travel_style', '')
         style2 = user2.get('travel_style', '')
@@ -564,7 +557,7 @@ class MatchingService:
             'style_match': style1 == style2
         }
     
-    async def _calculate_demographic_compatibility(self, user1: Dict[str, Any], user2: Dict[str, Any]) -> Dict[str, Any]:
+    def _calculate_demographic_compatibility(self, user1: Dict[str, Any], user2: Dict[str, Any]) -> Dict[str, Any]:
         """Age-gap heuristic mapped to a 0–1 compatibility score."""
         age1 = user1.get('age', 0)
         age2 = user2.get('age', 0)
@@ -587,7 +580,7 @@ class MatchingService:
             'age_compatibility': age_score
         }
     
-    async def _generate_multidimensional_explanation(
+    def _generate_multidimensional_explanation(
         self, dimensions: Dict[str, float], weights: Dict[str, float]
     ) -> str:
         """Ranks dimensions by weighted score and returns a short Spanish summary string."""
@@ -597,7 +590,7 @@ class MatchingService:
             return "Compatibilidad moderada en varias dimensiones."
         return "Mayor alineación en: " + ", ".join(top)
 
-    async def _compute_match_dimensions(
+    def _compute_match_dimensions(
         self, user_a: Dict[str, Any], user_b: Dict[str, Any]
     ) -> Dict[str, float]:
         """PBI 26: per-dimension 0–1 signals (interests, style, budget, pace, personality)."""
@@ -655,7 +648,7 @@ class MatchingService:
             logger.warning("Matching model signal fallback: %s", exc)
             return float(sum(dimensions.values()) / max(len(dimensions), 1))
 
-    async def process_connection_outcome(
+    def process_connection_outcome(
         self,
         user_id: str,
         target_user_id: str,
@@ -666,22 +659,21 @@ class MatchingService:
         """PBI 27: records success/incompatibility against optional dimension snapshot."""
         snap = dimension_snapshot
         if snap is None:
-            ua = await self._get_user_profile(user_id)
-            ub = await self._get_user_profile(target_user_id)
+            ua = self._get_user_profile(user_id)
+            ub = self._get_user_profile(target_user_id)
             if ua and ub:
-                snap = await self._compute_match_dimensions(ua, ub)
+                snap = self._compute_match_dimensions(ua, ub)
             else:
                 snap = {}
         if outcome == ConnectionOutcome.SUCCESS:
             return self.learning_store.record_success(snap, notes)
         return self.learning_store.record_incompatible(snap, notes)
 
-    async def _update_matching_algorithm(self, user_id: str, target_user_id: str, rating: int):
+    def _update_matching_algorithm(self, user_id: str, target_user_id: str, rating: int):
         """Delegates rating-side learning to ``learning_store.record_rating_feedback``."""
+        _ = (user_id, target_user_id)
         self.learning_store.record_rating_feedback(rating)
         logger.info(
-            "Updated matching weights from rating %s/5 (users %s <-> %s)",
+            "Updated matching weights from rating %s/5",
             rating,
-            user_id,
-            target_user_id,
         )

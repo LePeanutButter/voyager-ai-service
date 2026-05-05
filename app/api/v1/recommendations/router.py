@@ -27,7 +27,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/destinations/personalized", response_model=DestinationRecommendationResponse)
+@router.post(
+    "/destinations/personalized",
+    response_model=DestinationRecommendationResponse,
+    responses={500: {"description": "Failed to generate destination recommendations"}},
+)
 async def get_personalized_destinations(
     body: DestinationRecommendationRequest,
     service: RecommendationServiceDep,
@@ -45,13 +49,17 @@ async def get_personalized_destinations(
         HTTPException: 500 if the engine or LLM path fails.
     """
     try:
-        return await service.get_personalized_destinations(body)
+        return service.get_personalized_destinations(body)
     except Exception as e:
         logger.error("Error generating destination recommendations: %s", e)
         raise HTTPException(status_code=500, detail="Failed to generate destination recommendations")
 
 
-@router.post("/activities/contextual", response_model=ContextualActivityResponse)
+@router.post(
+    "/activities/contextual",
+    response_model=ContextualActivityResponse,
+    responses={500: {"description": "Failed to generate contextual activities"}},
+)
 async def get_contextual_activities(
     body: ContextualActivityRequest,
     service: RecommendationServiceDep,
@@ -69,13 +77,17 @@ async def get_contextual_activities(
         HTTPException: 500 on internal error.
     """
     try:
-        return await service.get_contextual_activities(body)
+        return service.get_contextual_activities(body)
     except Exception as e:
         logger.error("Error generating contextual activities: %s", e)
         raise HTTPException(status_code=500, detail="Failed to generate contextual activities")
 
 
-@router.post("/personalized", response_model=RecommendationResponse)
+@router.post(
+    "/personalized",
+    response_model=RecommendationResponse,
+    responses={500: {"description": "Failed to generate recommendations"}},
+)
 async def get_personalized_recommendations(
     request_data: RecommendationRequest,
     service: RecommendationServiceDep,
@@ -94,7 +106,7 @@ async def get_personalized_recommendations(
     """
     try:
         logger.info("Generating recommendations for user %s", request_data.user_id)
-        recommendations = await service.generate_recommendations(request_data)
+        recommendations = service.generate_recommendations(request_data)
         logger.info("Generated %s recommendations", len(recommendations.recommendations))
         return recommendations
     except Exception as e:
@@ -102,7 +114,10 @@ async def get_personalized_recommendations(
         raise HTTPException(status_code=500, detail="Failed to generate recommendations")
 
 
-@router.get("/popular/{location}")
+@router.get(
+    "/popular/{location}",
+    responses={500: {"description": "Failed to fetch popular activities"}},
+)
 async def get_popular_activities(
     service: RecommendationServiceDep,
     location: str,
@@ -122,15 +137,18 @@ async def get_popular_activities(
         HTTPException: 500 on internal error.
     """
     try:
-        logger.info("Fetching popular activities for %s", location)
-        activities = await service.get_popular_activities(location, limit)
+        logger.info("Fetching popular activities")
+        activities = service.get_popular_activities(location, limit)
         return {"location": location, "activities": activities, "total_results": len(activities)}
     except Exception as e:
         logger.error("Error fetching popular activities: %s", e)
         raise HTTPException(status_code=500, detail="Failed to fetch popular activities")
 
 
-@router.get("/trending")
+@router.get(
+    "/trending",
+    responses={500: {"description": "Failed to fetch trending activities"}},
+)
 async def get_trending_activities(
     service: RecommendationServiceDep,
     category: Optional[str] = None,
@@ -151,14 +169,17 @@ async def get_trending_activities(
     """
     try:
         logger.info("Fetching trending activities for category: %s", category)
-        activities = await service.get_trending_activities(category, limit)
+        activities = service.get_trending_activities(category, limit)
         return {"category": category, "activities": activities, "total_results": len(activities)}
     except Exception as e:
         logger.error("Error fetching trending activities: %s", e)
         raise HTTPException(status_code=500, detail="Failed to fetch trending activities")
 
 
-@router.get("/similar/{activity_id}")
+@router.get(
+    "/similar/{activity_id}",
+    responses={500: {"description": "Failed to fetch similar activities"}},
+)
 async def get_similar_activities(
     service: RecommendationServiceDep,
     activity_id: str,
@@ -179,7 +200,7 @@ async def get_similar_activities(
     """
     try:
         logger.info("Fetching activities similar to %s", activity_id)
-        similar_activities = await service.get_similar_activities(activity_id, limit)
+        similar_activities = service.get_similar_activities(activity_id, limit)
         return {
             "reference_activity_id": activity_id,
             "similar_activities": similar_activities,
@@ -190,7 +211,13 @@ async def get_similar_activities(
         raise HTTPException(status_code=500, detail="Failed to fetch similar activities")
 
 
-@router.post("/feedback")
+@router.post(
+    "/feedback",
+    responses={
+        400: {"description": "Rating must be between 1 and 5"},
+        500: {"description": "Failed to record feedback"},
+    },
+)
 async def submit_recommendation_feedback(
     service: RecommendationServiceDep,
     user_id: str,
@@ -217,7 +244,7 @@ async def submit_recommendation_feedback(
         if rating < 1 or rating > 5:
             raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
         logger.info("Recording feedback from user %s for activity %s", user_id, activity_id)
-        await service.record_feedback(user_id, activity_id, rating, feedback_text)
+        service.record_feedback(user_id, activity_id, rating, feedback_text)
         return {
             "message": "Feedback recorded successfully",
             "user_id": user_id,
@@ -231,7 +258,10 @@ async def submit_recommendation_feedback(
         raise HTTPException(status_code=500, detail="Failed to record feedback")
 
 
-@router.get("/categories")
+@router.get(
+    "/categories",
+    responses={500: {"description": "Failed to fetch categories"}},
+)
 async def get_activity_categories(service: RecommendationServiceDep):
     """Lists categories available to filter or tag activities.
 
@@ -245,7 +275,7 @@ async def get_activity_categories(service: RecommendationServiceDep):
         HTTPException: 500 on internal error.
     """
     try:
-        categories = await service.get_activity_categories()
+        categories = service.get_activity_categories()
         return {"categories": categories, "total_count": len(categories)}
     except Exception as e:
         logger.error("Error fetching categories: %s", e)

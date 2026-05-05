@@ -26,22 +26,22 @@ async def test_profile_crud(svc: UserService):
             preferences=[TravelPreference.CULTURAL],
         ),
     )
-    created = await svc.create_user_profile(p)
+    created = svc.create_user_profile(p)
     assert created.user_id == "us1"
 
-    got = await svc.get_user_profile("us1")
+    got = svc.get_user_profile("us1")
     assert got is not None
 
-    upd = await svc.update_user_profile("us1", UserProfileUpdate(location="Lima"))
+    upd = svc.update_user_profile("us1", UserProfileUpdate(location="Lima"))
     assert upd.location == "Lima"
 
     inter = UserInteraction(user_id="us1", activity_id="a1", interaction_type="view")
-    await svc.record_interaction(inter)
-    hist = await svc.get_interaction_history("us1", 10)
+    svc.record_interaction(inter)
+    hist = svc.get_interaction_history("us1", 10)
     assert len(hist) >= 1
 
-    ins = await svc.generate_user_insights("us1")
+    ins = svc.generate_user_insights("us1")
     assert ins
 
-    assert await svc.delete_user_profile("us1") is True
-    assert await svc.get_user_profile("us1") is None
+    assert svc.delete_user_profile("us1") is True
+    assert svc.get_user_profile("us1") is None

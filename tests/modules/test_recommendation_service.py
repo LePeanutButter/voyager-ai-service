@@ -30,7 +30,7 @@ async def test_get_personalized_destinations(rec_svc: RecommendationService):
         max_results=4,
         include_emerging_trends=False,
     )
-    out = await rec_svc.get_personalized_destinations(req)
+    out = rec_svc.get_personalized_destinations(req)
     assert out.destinations
 
 
@@ -40,7 +40,7 @@ async def test_get_personalized_destinations_with_trends(mock_mm):
     await ts.refresh()
     svc = RecommendationService(mock_mm, trends_service=ts)
     req = DestinationRecommendationRequest(user_id="u1", max_results=6, include_emerging_trends=True)
-    out = await svc.get_personalized_destinations(req)
+    out = svc.get_personalized_destinations(req)
     assert out.destinations
 
 
@@ -53,7 +53,7 @@ async def test_contextual_activities(rec_svc: RecommendationService):
         weather=WeatherCondition.RAIN,
         max_results=4,
     )
-    out = await rec_svc.get_contextual_activities(req)
+    out = rec_svc.get_contextual_activities(req)
     assert out.activities
 
 
@@ -66,46 +66,46 @@ async def test_generate_recommendations(rec_svc: RecommendationService):
         location=Location(latitude=10, longitude=20, city="X"),
         max_results=3,
     )
-    out = await rec_svc.generate_recommendations(req)
+    out = rec_svc.generate_recommendations(req)
     assert out.recommendations
 
 
 @pytest.mark.asyncio
 async def test_get_categories_and_trending(rec_svc: RecommendationService):
-    cats = await rec_svc.get_activity_categories()
+    cats = rec_svc.get_activity_categories()
     assert "cultural" in cats
-    t = await rec_svc.get_trending_activities(None, 2)
+    t = rec_svc.get_trending_activities(None, 2)
     assert len(t) <= 2
 
 
 @pytest.mark.asyncio
 async def test_get_popular_activities(rec_svc: RecommendationService):
-    acts = await rec_svc.get_popular_activities("Barcelona", 5)
+    acts = rec_svc.get_popular_activities("Barcelona", 5)
     assert len(acts) <= 5
 
 
 @pytest.mark.asyncio
 async def test_get_trending_with_category(rec_svc: RecommendationService):
-    t = await rec_svc.get_trending_activities("cultural", 3)
+    t = rec_svc.get_trending_activities("cultural", 3)
     assert isinstance(t, list)
 
 
 @pytest.mark.asyncio
 async def test_get_similar_no_reference(rec_svc: RecommendationService):
-    sim = await rec_svc.get_similar_activities("missing_id_xyz", 3)
+    sim = rec_svc.get_similar_activities("missing_id_xyz", 3)
     assert sim == []
 
 
 @pytest.mark.asyncio
 async def test_record_feedback(rec_svc: RecommendationService):
-    await rec_svc.record_feedback("u1", "act1", 4, feedback_text="nice")
+    rec_svc.record_feedback("u1", "act1", 4, feedback_text="nice")
 
 
 @pytest.mark.asyncio
 async def test_generate_raises_propagates(mock_mm, monkeypatch):
     svc = RecommendationService(mock_mm)
 
-    async def boom(*a, **k):
+    def boom(*a, **k):
         raise RuntimeError("fail")
 
     monkeypatch.setattr(svc, "_get_user_profile", boom)
@@ -118,4 +118,4 @@ async def test_generate_raises_propagates(mock_mm, monkeypatch):
         max_results=2,
     )
     with pytest.raises(RuntimeError):
-        await svc.generate_recommendations(req)
+        svc.generate_recommendations(req)
