@@ -9,6 +9,8 @@ def test_destinations_personalized(client, sample_user_profile_payload):
         "prefer_successful_patterns": True,
         "include_emerging_trends": False,
         "theme_weights": {"cultural": 1.0},
+        "travel_month": 9,
+        "apply_seasonality_mitigation": True,
     }
     r = client.post("/api/v1/recommendations/destinations/personalized", json=body)
     assert r.status_code == 200
@@ -16,6 +18,8 @@ def test_destinations_personalized(client, sample_user_profile_payload):
     assert data["user_id"] == "test-user-1"
     assert "destinations" in data
     assert isinstance(data["destinations"], list)
+    assert data.get("seasonality_note")
+    assert any(d.get("seasonal_context") for d in data["destinations"])
 
 
 def test_contextual_activities(client, sample_user_profile_payload):

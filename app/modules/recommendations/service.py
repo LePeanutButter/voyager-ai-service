@@ -16,6 +16,7 @@ Dependencies:
 from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from app.modules.seasonality.service import SeasonalityService
     from app.modules.trends.service import TrendsService
 import logging
 import math
@@ -68,15 +69,22 @@ class RecommendationService:
         cache: In-memory map of hashed recommendation responses.
     """
 
-    def __init__(self, model_manager, trends_service: Optional["TrendsService"] = None):
-        """Attaches models and an optional trends collaborator (Feature 15).
+    def __init__(
+        self,
+        model_manager,
+        trends_service: Optional["TrendsService"] = None,
+        seasonality_service: Optional["SeasonalityService"] = None,
+    ):
+        """Attaches models and optional trends / seasonality collaborators.
 
         Args:
             model_manager: Shared ``ModelManager``.
             trends_service: Used when ``include_emerging_trends`` is requested.
+            seasonality_service: Mitigación estacional en ranking de destinos (paper).
         """
         self.model_manager = model_manager
         self.trends_service = trends_service
+        self.seasonality_service = seasonality_service
         self.cache = {}  # Simple in-memory cache (replace with Redis in production)
     
     def generate_recommendations(self, request: RecommendationRequest) -> RecommendationResponse:
@@ -317,12 +325,56 @@ class RecommendationService:
             request.max_results,
         )
 
+        travel_month = request.travel_month or datetime.now(timezone.utc).month
+        seasonality_note = ""
+        if request.apply_seasonality_mitigation and self.seasonality_service:
+            merged = self._apply_seasonality_to_destination_cards(merged, travel_month)
+            seasonality_note = (
+                f"Mitigación estacional activa (mes de viaje {travel_month}): "
+                "scores ajustados por índice de demanda y visibilidad dinámica."
+            )
+
         return DestinationRecommendationResponse(
             user_id=request.user_id,
             destinations=merged[: request.max_results],
             generated_at=datetime.now(timezone.utc),
             diversity_note=diversity_note.strip(),
+            seasonality_note=seasonality_note,
         )
+
+    def _apply_seasonality_to_destination_cards(
+        self, cards: List[DestinationCard], month: int
+    ) -> List[DestinationCard]:
+        if not self.seasonality_service:
+            return cards
+        out: List[DestinationCard] = []
+        for c in cards:
+            ctx = self.seasonality_service.seasonal_context(c.destination_id, month)
+            adj = min(1.0, c.compatibility_score * ctx.visibility_multiplier)
+            extra = ""
+            if ctx.phase == "off_peak":
+                extra = (
+                    f" Estacionalidad: valle/hombro (índice demanda {ctx.demand_index:.2f}); "
+                    "mayor visibilidad en ranking."
+                )
+            elif ctx.phase == "peak":
+                extra = (
+                    f" Estacionalidad: pico (índice demanda {ctx.demand_index:.2f}); "
+                    "visibilidad moderada para balancear capacidad."
+                )
+            else:
+                extra = f" Estacionalidad: hombro (índice demanda {ctx.demand_index:.2f})."
+            out.append(
+                c.model_copy(
+                    update={
+                        "compatibility_score": round(adj, 4),
+                        "rationale": (c.rationale + extra).strip(),
+                        "seasonal_context": ctx,
+                    }
+                )
+            )
+        out.sort(key=lambda x: x.compatibility_score, reverse=True)
+        return out
 
     def _extract_history_tags(self, profile: Dict[str, Any]) -> Tuple[List[str], List[str]]:
         history: List[Dict[str, Any]] = profile.get("travel_history", [])

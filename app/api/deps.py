@@ -21,6 +21,7 @@ from app.modules.chat.service import ChatService
 from app.modules.matching.service import MatchingService
 from app.modules.preferences.service import PreferenceQuestionnaireService
 from app.modules.recommendations.service import RecommendationService
+from app.modules.seasonality.service import SeasonalityService
 from app.modules.trends.service import TrendsService
 from app.modules.users.service import UserService
 
@@ -105,6 +106,17 @@ def get_matching_service(request: Request) -> MatchingService:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Matching service unavailable",
+        )
+    return svc
+
+
+def get_seasonality_service(request: Request) -> SeasonalityService:
+    """Resolves seasonality engine from app state."""
+    svc = getattr(request.app.state, "seasonality_service", None)
+    if svc is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Seasonality service not available",
         )
     return svc
 
@@ -220,6 +232,7 @@ ModelManagerDep = Annotated[ModelManager, Depends(_require_model_manager)]
 RecommendationServiceDep = Annotated[RecommendationService, Depends(get_recommendation_service)]
 UserServiceDep = Annotated[UserService, Depends(get_user_service)]
 MatchingServiceDep = Annotated[MatchingService, Depends(get_matching_service)]
+SeasonalityServiceDep = Annotated[SeasonalityService, Depends(get_seasonality_service)]
 TrendsServiceDep = Annotated[TrendsService, Depends(get_trends_service)]
 BehaviorAnalysisServiceDep = Annotated[BehaviorAnalysisService, Depends(get_behavior_service)]
 AdaptiveUIServiceDep = Annotated[AdaptiveUIService, Depends(get_adaptive_ui_service)]

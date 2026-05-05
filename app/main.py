@@ -10,6 +10,7 @@ Dependencies:
 """
 
 from contextlib import asynccontextmanager
+import asyncio
 import logging
 import os
 
@@ -19,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_v1_router
 from app.modules.chat.service import ChatService
 from app.core.config import settings
+from app.db.database import check_db_connection
 from app.ml.model_loader import ModelManager
 from app.ml.learning_store import MatchingLearningStore
 from app.modules.adaptive_ui.service import AdaptiveUIService
@@ -26,6 +28,7 @@ from app.modules.behavior.service import BehaviorAnalysisService
 from app.modules.matching.service import MatchingService
 from app.modules.preferences.service import PreferenceQuestionnaireService
 from app.modules.recommendations.service import RecommendationService
+from app.modules.seasonality.service import SeasonalityService
 from app.modules.trends.service import TrendsService
 from app.modules.users.service import UserService
 
@@ -48,6 +51,13 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Starting Tourism Assistant microservice...")
 
+    try:
+        await asyncio.to_thread(check_db_connection)
+        logger.info("Database connectivity OK")
+    except Exception as e:
+        logger.error("Database check failed: %s", e)
+        raise
+
     model_manager = ModelManager()
     await model_manager.load_models()
     app.state.model_manager = model_manager
@@ -64,9 +74,13 @@ async def lifespan(app: FastAPI):
 
     app.state.user_service = UserService(model_manager)
     app.state.matching_service = MatchingService(model_manager, app.state.matching_learning)
+
+    seasonality_service = SeasonalityService()
+    app.state.seasonality_service = seasonality_service
     app.state.recommendation_service = RecommendationService(
         model_manager,
         trends_service=trends_service,
+        seasonality_service=seasonality_service,
     )
 
     chat_service = ChatService()
@@ -91,13 +105,16 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_cors_kwargs = {
+    "allow_origins": settings.ALLOWED_ORIGINS,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+_cors_regex = settings.resolved_cors_origin_regex
+if _cors_regex:
+    _cors_kwargs["allow_origin_regex"] = _cors_regex
+app.add_middleware(CORSMiddleware, **_cors_kwargs)
 
 app.include_router(api_v1_router, prefix="/api/v1")
 
@@ -139,8 +156,22 @@ async def health_check():
         models_loaded = (
             model_manager is not None and model_manager.is_ready() if model_manager else False
         )
+        try:
+            await asyncio.to_thread(check_db_connection)
+        except Exception as db_err:
+            logger.warning("Health: database check failed: %s", db_err)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "status": "unhealthy",
+                    "database": "error",
+                    "models_loaded": models_loaded,
+                    "service": "tourism-assistant",
+                },
+            )
         return {
             "status": "healthy",
+            "database": "ok",
             "models_loaded": models_loaded,
             "service": "tourism-assistant",
         }

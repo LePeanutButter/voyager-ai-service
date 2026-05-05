@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.modules.common.schemas.base import Location
 from app.modules.common.schemas.enums import ActivityType, TravelPreference, WeatherCondition
+from app.modules.seasonality.schemas import SeasonalContext
 
 
 class RecommendationRequest(BaseModel):
@@ -67,6 +68,7 @@ class DestinationCard(BaseModel):
     tags: List[str] = Field(default_factory=list)
     compatibility_score: float = Field(..., ge=0.0, le=1.0)
     rationale: str = ""
+    seasonal_context: Optional[SeasonalContext] = None
 
 
 class DestinationRecommendationRequest(BaseModel):
@@ -77,6 +79,16 @@ class DestinationRecommendationRequest(BaseModel):
     prefer_successful_patterns: bool = True
     include_emerging_trends: bool = True
     theme_weights: Optional[Dict[str, float]] = None
+    travel_month: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=12,
+        description="Mes previsto del viaje (1–12); por defecto mes actual UTC.",
+    )
+    apply_seasonality_mitigation: bool = Field(
+        default=True,
+        description="Aplica mitigación de estacionalidad al ranking (paper: visibilidad dinámica).",
+    )
 
 
 class DestinationRecommendationResponse(BaseModel):
@@ -86,6 +98,7 @@ class DestinationRecommendationResponse(BaseModel):
     destinations: List[DestinationCard]
     generated_at: datetime
     diversity_note: str = ""
+    seasonality_note: str = ""
 
 
 class ContextualActivityRequest(BaseModel):

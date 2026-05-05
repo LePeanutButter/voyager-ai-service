@@ -8,9 +8,19 @@ Dependencies:
     `pydantic_settings.BaseSettings`, optional `.env` file.
 """
 
+from __future__ import annotations
+
+from typing import List, Optional
+from urllib.parse import quote_plus
+
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
-from typing import List
-import os
+
+# Origen browser típico cuando el front resuelve el DNS público de la instancia EC2
+# (p. ej. Learner Lab). No coincide con IP literal ni con otros dominios.
+_EC2_COMPUTE_PUBLIC_DNS_ORIGIN_REGEX = (
+    r"^https?://ec2-(?:\d{1,3}-){3}\d{1,3}\.[a-z0-9.-]+\.amazonaws\.com(?::\d+)?$"
+)
 
 
 class Settings(BaseSettings):
@@ -36,10 +46,38 @@ class Settings(BaseSettings):
 
     # API configuration
     API_V1_STR: str = "/api/v1"
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8080", "http://localhost:5173"]
+    # CORS: lista explícita. En env puedes usar CSV: http://localhost:3000,http://1.2.3.4:5173
+    ALLOWED_ORIGINS: List[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://localhost:8080",
+            "http://localhost:5173",
+        ],
+    )
+    # Regex adicional (sin usar *). Útil para patrones de laboratorio (p. ej. Vocareum).
+    CORS_ALLOW_ORIGIN_REGEX: str = Field(
+        default="",
+        description="Regex de origen permitido además de ALLOWED_ORIGINS. Vacío = desactivado.",
+    )
+    # Learner Lab / EC2: permite solo hostnames ec2-*.…amazonaws.com (no IP suelta ni *).
+    CORS_ALLOW_EC2_COMPUTE_DNS: bool = Field(
+        default=False,
+        description="Activa regex acotada a DNS público compute.amazonaws.com típico de EC2.",
+    )
 
-    # Database configuration (placeholder for future integration)
-    DATABASE_URL: str = "sqlite:///./tourism_assistant.db"
+    # Database: SQLite by default; set DB_HOST + DB_USERNAME + DB_PASSWORD for PostgreSQL
+    # (local o RDS), alineado con voyager-backend-core (variables separadas + ssl opcional).
+    DATABASE_URL: Optional[str] = Field(
+        default=None,
+        description="SQLAlchemy URL. Si no se define, se construye desde DB_* o se usa SQLite.",
+    )
+    DB_HOST: str = ""
+    DB_PORT: int = 5432
+    DB_NAME: str = "tourism_ai"
+    DB_USERNAME: str = ""
+    DB_PASSWORD: str = ""
+    # RDS: usar "require" igual que JDBC ?sslmode=require en Spring.
+    DB_SSLMODE: str = ""
 
     # ML Model configuration
     MODEL_PATH: str = "./app/ml/models"
@@ -84,6 +122,18 @@ class Settings(BaseSettings):
     ADAPTIVE_UI_THEME_BOOST_DELTA: float = 0.12
 
     # -----------------------------------------------------------------------
+    # Seasonality (digital-transformation.tex: SARIMA s=12, mitigación, visibilidad)
+    # -----------------------------------------------------------------------
+    SEASONALITY_HISTORY_MONTHS: int = 36
+    SEASONALITY_AMPLITUDE: float = 0.38
+    SEASONALITY_MITIGATION_STRENGTH: float = 0.22
+    SEASONALITY_PEAK_THRESHOLD: float = 1.12
+    SEASONALITY_OFFPEAK_THRESHOLD: float = 0.88
+    SEASONALITY_PEAK_DAMP_CAP: float = 0.45
+    SEASONALITY_MULT_MIN: float = 0.82
+    SEASONALITY_MULT_MAX: float = 1.18
+
+    # -----------------------------------------------------------------------
     # LLM Integration settings
     # LLM_PROVIDER: "openai" | "openai_compatible" | "ollama" | "none"
     # Set to "none" (default) to run in rule-based fallback mode only.
@@ -102,6 +152,61 @@ class Settings(BaseSettings):
     CHAT_MAX_HISTORY: int = 20
     # Maximum suggestions returned per chat turn
     CHAT_MAX_SUGGESTIONS: int = 5
+
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def _parse_allowed_origins(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def _empty_db_url_as_none(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v
+
+    @model_validator(mode="after")
+    def _assemble_database_url(self) -> Settings:
+        if self.DATABASE_URL:
+            return self
+        if self.DB_HOST and self.DB_USERNAME and self.DB_PASSWORD:
+            user = quote_plus(self.DB_USERNAME)
+            pwd = quote_plus(self.DB_PASSWORD)
+            ssl_q = f"?sslmode={self.DB_SSLMODE}" if (self.DB_SSLMODE or "").strip() else ""
+            object.__setattr__(
+                self,
+                "DATABASE_URL",
+                (
+                    f"postgresql+psycopg2://{user}:{pwd}@{self.DB_HOST}:{self.DB_PORT}/"
+                    f"{self.DB_NAME}{ssl_q}"
+                ),
+            )
+        else:
+            object.__setattr__(self, "DATABASE_URL", "sqlite:///./tourism_assistant.db")
+        return self
+
+    @property
+    def resolved_database_url(self) -> str:
+        """URL efectiva tras validadores (siempre definida)."""
+        assert self.DATABASE_URL is not None
+        return self.DATABASE_URL
+
+    @property
+    def resolved_cors_origin_regex(self) -> Optional[str]:
+        """Patrón único o alternancia para CORSMiddleware.allow_origin_regex."""
+        parts: List[str] = []
+        if self.CORS_ALLOW_EC2_COMPUTE_DNS:
+            parts.append(_EC2_COMPUTE_PUBLIC_DNS_ORIGIN_REGEX)
+        custom = (self.CORS_ALLOW_ORIGIN_REGEX or "").strip()
+        if custom:
+            parts.append(f"({custom})")
+        if not parts:
+            return None
+        return "|".join(parts) if len(parts) > 1 else parts[0]
 
     class Config:
         env_file = ".env"

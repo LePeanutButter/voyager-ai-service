@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "aa2ecae5-2456-4e72-a55c-0aa374a6071d",
     "name": "Voyager AI Service — API completa (local)",
-    "description": "## Voyager AI Service (FastAPI) — suite Postman local\n\n### Requisitos\n1. Microservicio en ejecución (por defecto `http://localhost:8000`).\n2. Prefijo API: **`/api/v1`** → variable `baseUrl` = `{{rootUrl}}/api/v1`.\n3. Importar **colección** + entorno **`Voyager-AI-Service.local`** y seleccionarlo.\n\n### Flujo sugerido\n1. **00 — Salud**: raíz, `/health`, OpenAPI.\n2. **02 — Usuarios**: crear perfil antes de flujos que lo requieran.\n3. **06 — Cuestionario**: el primer **step** guarda `questionnaireSessionId` en el entorno.\n4. **Matching**: perfiles mock internos incluyen `user1`, `user2`, `user3`.\n\n### Notas\n- Sin autenticación JWT (a diferencia de voyager-backend-core).\n- Esquemas Pydantic: cuerpos en **snake_case** salvo **chat** (`userId`, `message`).\n\n### Regenerar colección\nDesde `voyager-ai-service/postman/`: `python generate_collection.py`\n",
+    "description": "## Voyager AI Service (FastAPI) — suite Postman local\n\n### Requisitos\n1. Microservicio en ejecución (por defecto `http://localhost:8000`).\n2. Prefijo API: **`/api/v1`** → variable `baseUrl` = `{{rootUrl}}/api/v1`.\n3. Importar **colección** + entorno **`Voyager-AI-Service.local`** y seleccionarlo.\n\n### Flujo sugerido\n1. **00 — Salud**: raíz, `/health`, OpenAPI.\n2. **02 — Usuarios**: crear perfil antes de flujos que lo requieran.\n3. **05 — Estacionalidad**: `/seasonality/*` (índices s=12, forecast naive, visibilidad).\n4. **07 — Cuestionario**: el primer **step** guarda `questionnaireSessionId` en el entorno.\n5. **Matching**: perfiles mock internos incluyen `user1`, `user2`, `user3`.\n\nEn **01 — Recommendations → Destinos personalizados** puedes usar `travel_month` (1–12) y `apply_seasonality_mitigation` para ver `seasonal_context` en las tarjetas.\n\n### Notas\n- Sin autenticación JWT (a diferencia de voyager-backend-core).\n- Esquemas Pydantic: cuerpos en **snake_case** salvo **chat** (`userId`, `message`).\n- Variables útiles: `seasonalityDestinationId` (p. ej. `dst_lisbon`), `seasonalityTravelMonth` (1–12).\n",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "version": "1.0.0"
   },
@@ -30,6 +30,14 @@
     {
       "key": "questionnaireSessionId",
       "value": ""
+    },
+    {
+      "key": "seasonalityDestinationId",
+      "value": "dst_lisbon"
+    },
+    {
+      "key": "seasonalityTravelMonth",
+      "value": "7"
     }
   ],
   "item": [
@@ -97,7 +105,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"user_id\": \"postman-user\",\n  \"max_results\": 6,\n  \"prefer_successful_patterns\": true,\n  \"include_emerging_trends\": false\n}",
+              "raw": "{\n  \"user_id\": \"postman-user\",\n  \"max_results\": 6,\n  \"prefer_successful_patterns\": true,\n  \"include_emerging_trends\": false,\n  \"travel_month\": {{seasonalityTravelMonth}},\n  \"apply_seasonality_mitigation\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -505,7 +513,93 @@
       ]
     },
     {
-      "name": "05 — Chat",
+      "name": "05 — Seasonality (estacionalidad)",
+      "description": "Índices mensuales s=12, perfil por destino, pronóstico ingenuo estacional y ajustes de visibilidad (PEAS / mitigación). Prefijo `/seasonality`. Variables: `seasonalityDestinationId`, `seasonalityTravelMonth`.",
+      "item": [
+        {
+          "name": "Overview",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/seasonality/overview",
+            "description": "Sin query: el backend usa el mes calendario actual (UTC) como `reference_month` en la respuesta. Opcional en otro request: `reference_month` 1–12."
+          },
+          "response": []
+        },
+        {
+          "name": "Overview (mes de referencia)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/seasonality/overview?reference_month={{seasonalityTravelMonth}}",
+            "description": "Fija el mes de referencia con la variable `seasonalityTravelMonth`."
+          },
+          "response": []
+        },
+        {
+          "name": "Perfil de un destino",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/seasonality/destinations/{{seasonalityDestinationId}}",
+            "description": "404 si el id no está en el catálogo interno de estacionalidad."
+          },
+          "response": []
+        },
+        {
+          "name": "Forecast (seasonal naive)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/seasonality/forecast",
+            "description": "Pronóstico placeholder hasta SARIMA con series reales.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"destination_id\": \"{{seasonalityDestinationId}}\",\n  \"start_month\": 1,\n  \"horizon_months\": 6\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Visibility adjustments",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{baseUrl}}/seasonality/visibility-adjustments",
+            "description": "Factores de visibilidad por destino y `travel_month`; con `apply_mitigation`: false el multiplicador queda en 1.0.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"destination_ids\": [\"{{seasonalityDestinationId}}\", \"dst_barcelona\"],\n  \"travel_month\": {{seasonalityTravelMonth}},\n  \"apply_mitigation\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "06 — Chat",
       "item": [
         {
           "name": "Enviar mensaje",
@@ -555,7 +649,7 @@
       ]
     },
     {
-      "name": "06 — Travel preferences (cuestionario)",
+      "name": "07 — Travel preferences (cuestionario)",
       "item": [
         {
           "name": "Step 1 — nueva sesión",
@@ -652,7 +746,7 @@
       ]
     },
     {
-      "name": "07 — Behavior analysis",
+      "name": "08 — Behavior analysis",
       "item": [
         {
           "name": "Track interacción",
@@ -762,7 +856,7 @@
       ]
     },
     {
-      "name": "08 — Adaptive UI",
+      "name": "09 — Adaptive UI",
       "item": [
         {
           "name": "Menú adaptativo",

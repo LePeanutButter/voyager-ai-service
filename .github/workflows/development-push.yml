@@ -1,7 +1,7 @@
 # ===========================================
 # CI — AI Service (push a development)
 # - Trivy + SonarCloud (ORGANIZATION_KEY, PROJECT_KEY, SONAR_TOKEN)
-# - Artefactos API + ml-models (Learner Lab: sin push a S3 desde CI; subes tú el tarball a S3 si aplica)
+# - Artefactos: API tar, ml-models.tar.gz, imagen Docker (voyager-ai-service-image.tar)
 # ===========================================
 
 name: CI Build & Deploy (AI Service - Development Push)
@@ -134,9 +134,20 @@ jobs:
             tar -czf release/ml-models.tar.gz -C app/ml models
           else
             mkdir -p release/ml-models-placeholder
-            printf '%s\n' '{"note":"Sin binarios en repo; sustituir con artefactos de entrenamiento o sync desde S3."}' > release/ml-models-placeholder/manifest.json
+            printf '%s\n' '{"note":"Sin binarios en repo; usar artefactos de entrenamiento o el bundle ml-models del CI en EC2."}' > release/ml-models-placeholder/manifest.json
             tar -czf release/ml-models.tar.gz -C release ml-models-placeholder
           fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (FastAPI)
+        run: |
+          mkdir -p release
+          docker build -t voyager-ai-service:latest .
+
+      - name: Save image for Learner Lab
+        run: docker save voyager-ai-service:latest -o release/voyager-ai-service-image.tar
 
       - name: Upload API artifact
         uses: actions/upload-artifact@v4
@@ -150,6 +161,12 @@ jobs:
           name: ai-service-ml-models
           path: release/ml-models.tar.gz
 
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-service-docker-image
+          path: release/voyager-ai-service-image.tar
+
   deploy:
     if: github.event_name == 'push'
     name: Deploy Handoff (Manual Learner Lab)
@@ -159,8 +176,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Make deploy script executable
-        run: chmod +x scripts/deploy-ai-service-manual.sh
+      - name: Make deploy scripts executable
+        run: chmod +x scripts/deploy-ai-service-manual.sh scripts/ec2-deploy-ai-service.sh
 
       - name: Download API artifact
         uses: actions/download-artifact@v4
@@ -168,10 +185,16 @@ jobs:
           name: ai-service-api
           path: release
 
-      - name: Download ML models artifact (subida S3 manual en Learner Lab)
+      - name: Download ML models artifact
         uses: actions/download-artifact@v4
         with:
           name: ai-service-ml-models
+          path: release
+
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-service-docker-image
           path: release
 
       - name: Upload manual deployment package
@@ -181,4 +204,6 @@ jobs:
           path: |
             release/ai-service-api.tar.gz
             release/ml-models.tar.gz
+            release/voyager-ai-service-image.tar
             scripts/deploy-ai-service-manual.sh
+            scripts/ec2-deploy-ai-service.sh
