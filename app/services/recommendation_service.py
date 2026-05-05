@@ -288,6 +288,7 @@ class RecommendationService:
             if trip.get("liked", True):
                 successful_tags.extend(tags)
 
+        tw = request.theme_weights or {}
         scored: List[Tuple[DestinationCard, float, str]] = []
         for row in _DESTINATION_CATALOG:
             tags = row["tags"]
@@ -298,11 +299,21 @@ class RecommendationService:
                     0.12,
                     0.03 * len(set(tags) & set(successful_tags)),
                 )
+            theme_boost = 0.0
+            if tw:
+                hits = [tw[t] for t in tags if t in tw]
+                if hits:
+                    theme_boost = min(0.1, 0.05 * sum(hits) / len(hits))
             # Map Jaccard overlap into a band that can satisfy PBI 24 (>80%) when perfil y destino alinean
-            score = min(1.0, 0.72 * base + 0.18 + success_boost + random.uniform(0.01, 0.04))
+            score = min(
+                1.0,
+                0.72 * base + 0.18 + success_boost + theme_boost + random.uniform(0.01, 0.04),
+            )
             rationale = f"Alineación preferencias {base:.0%}"
             if success_boost:
                 rationale += f"; refuerzo por viajes exitosos similares (+{success_boost:.0%})"
+            if theme_boost:
+                rationale += f"; sesgo feed/UI (+{theme_boost:.0%})"
             card = DestinationCard(
                 destination_id=row["destination_id"],
                 name=row["name"],

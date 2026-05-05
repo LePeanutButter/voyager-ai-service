@@ -24,11 +24,11 @@ router = APIRouter()
 
 async def get_behavior_service(request: Request) -> BehaviorAnalysisService:
     """Dependency injection for behavior analysis service."""
-    # Use persistent service instance from app state
-    if not hasattr(request.app.state, 'behavior_analysis_service'):
-        model_manager = getattr(request.app.state, 'model_manager', None)
-        request.app.state.behavior_analysis_service = BehaviorAnalysisService(model_manager)
-    
+    existing = getattr(request.app.state, "behavior_analysis_service", None)
+    if existing is not None:
+        return existing
+    model_manager = getattr(request.app.state, "model_manager", None)
+    request.app.state.behavior_analysis_service = BehaviorAnalysisService(model_manager)
     return request.app.state.behavior_analysis_service
 
 

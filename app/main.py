@@ -17,10 +17,12 @@ from contextlib import asynccontextmanager
 import logging
 
 from app.core.config import settings
-from app.routes import recommendations, users, matching, trends, behavior_analysis
+from app.routes import recommendations, users, matching, trends, behavior_analysis, adaptive_ui
 from app.ml.model_loader import ModelManager
 from app.ml.learning_store import MatchingLearningStore
 from app.services.trends_service import TrendsService
+from app.services.behavior_analysis_service import BehaviorAnalysisService
+from app.services.adaptive_ui_service import AdaptiveUIService
 from app.chat.router import router as chat_router
 from app.chat.service import ChatService
 from app.preferences.router import router as travel_preferences_router
@@ -50,6 +52,11 @@ async def lifespan(app: FastAPI):
     trends_service = TrendsService()
     await trends_service.refresh()
     app.state.trends_service = trends_service
+
+    # Behavior + Feature 16 — adaptive UI (comparten el mismo store in-memory)
+    behavior_analysis_service = BehaviorAnalysisService(model_manager)
+    app.state.behavior_analysis_service = behavior_analysis_service
+    app.state.adaptive_ui_service = AdaptiveUIService(behavior_analysis_service)
 
     # Initialize ChatService singleton (holds in-memory conversation store)
     chat_service = ChatService()
@@ -128,6 +135,12 @@ app.include_router(
     behavior_analysis.router,
     prefix="/api/v1/behavior-analysis",
     tags=["behavior-analysis"],
+)
+
+app.include_router(
+    adaptive_ui.router,
+    prefix="/api/v1/adaptive-ui",
+    tags=["adaptive-ui"],
 )
 
 

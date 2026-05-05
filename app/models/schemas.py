@@ -4,6 +4,7 @@ Shared Pydantic schemas for the Tourism Assistant API.
 Feature coverage (agile backlog):
 - F12 PBI 24–25: destinations + contextual activities
 - F13 PBI 26–27: multidimensional matching + continuous learning payloads
+- F16 PBI 32–33: adaptive UI (menu + home feed)
 """
 
 from __future__ import annotations
@@ -150,6 +151,58 @@ class APIResponse(BaseModel):
     data: Optional[Any] = None
 
 
+# --- Behavior analysis (implicit preferences; feeds adaptive UI) ---
+
+
+class InteractionType(str, Enum):
+    VIEW = "view"
+    CLICK = "click"
+    BOOKMARK = "bookmark"
+    SHARE = "share"
+    REJECT = "reject"
+    BOOK = "book"
+    RATE = "rate"
+    SEARCH = "search"
+    FILTER = "filter"
+
+
+class BehaviorTrackingRequest(BaseModel):
+    user_id: str
+    interaction_type: InteractionType
+    activity_id: Optional[str] = None
+    activity_category: Optional[str] = None
+    session_duration: Optional[float] = None
+    context: Optional[Dict[str, Any]] = None
+
+
+class BehaviorAnalysisRequest(BaseModel):
+    user_id: str
+    analysis_period_days: int = 7
+    include_patterns: bool = True
+    include_preference_updates: bool = True
+
+
+class BehaviorPattern(BaseModel):
+    pattern_type: str
+    confidence: float
+    frequency: int
+    last_detected: datetime
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DateRange(BaseModel):
+    start: datetime
+    end: datetime
+
+
+class ImplicitPreferenceUpdate(BaseModel):
+    user_id: str
+    preference_changes: Dict[str, float]
+    detected_patterns: List[BehaviorPattern]
+    analysis_period: DateRange
+    confidence_score: float
+
+
 # --- Feature 12: destinations (PBI 24) & contextual activities (PBI 25) ---
 
 
@@ -169,6 +222,8 @@ class DestinationRecommendationRequest(BaseModel):
     prefer_successful_patterns: bool = True
     """PBI 30: merge destinations marcados como emergentes si encajan con preferencias."""
     include_emerging_trends: bool = True
+    """PBI 33: pesos por tema (p.ej. desde GET .../adaptive-ui/home-feed/{user_id})."""
+    theme_weights: Optional[Dict[str, float]] = None
 
 
 class DestinationRecommendationResponse(BaseModel):
@@ -297,3 +352,64 @@ class WeeklyTrendsDigestResponse(BaseModel):
     micro_trends: List[MicroTrendOpportunity]
     partner_notifications: List[PartnerTrendNotification]
     next_refresh_note: str = "Análisis programable semanal (sustituir por job + cola en producción)."
+
+
+# --- Feature 16: adaptive UI (PBI 32–33) ---
+
+
+class NavItemTier(str, Enum):
+    PRIMARY = "primary"
+    SECONDARY = "secondary"
+    OVERFLOW = "overflow"
+
+
+class MenuNavItem(BaseModel):
+    """Single entry in the adapted navigation; client maps `nav_item_id` to routes."""
+
+    nav_item_id: str
+    label: str
+    sort_index: int = 0
+    tier: NavItemTier = NavItemTier.PRIMARY
+    usage_score: float = Field(0.0, ge=0.0, le=1.0, description="Normalizado 0–1 según frecuencia en la ventana")
+    adaptation_reason: str = ""
+
+
+class MenuAdaptationResponse(BaseModel):
+    user_id: str
+    generated_at: datetime
+    analysis_window_days: int = 30
+    primary_items: List[MenuNavItem] = Field(default_factory=list)
+    secondary_items: List[MenuNavItem] = Field(default_factory=list)
+    summary: str = ""
+
+
+class HomeFeedSection(BaseModel):
+    section_id: str
+    title: str
+    content_types: List[str] = Field(
+        default_factory=list,
+        description="p.ej. destinations, activities, stories",
+    )
+    theme_tags: List[str] = Field(
+        default_factory=list,
+        description="Alineado con intereses: adventure, cultural, etc.",
+    )
+    priority_weight: float = Field(..., ge=0.0, le=1.0)
+
+
+class HomeFeedLayoutResponse(BaseModel):
+    user_id: str
+    generated_at: datetime
+    primary_theme: str = Field(
+        default="balanced",
+        description="Tema principal del hero / destacados (p.ej. adventure, cultural).",
+    )
+    sections: List[HomeFeedSection] = Field(default_factory=list)
+    recommendation_theme_weights: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Ponderación sugerida por tema para siguientes llamadas a recomendaciones.",
+    )
+    feed_refresh_note: str = (
+        "Prioridades derivadas del comportamiento reciente; "
+        "actualizar al recibir nuevas interacciones (PBI 33)."
+    )

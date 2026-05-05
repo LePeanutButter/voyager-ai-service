@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     SERVICE_DESCRIPTION: str = (
         "AI-powered microservice for personalized travel recommendations, "
-        "conversational trip planning, traveler matching, and predictive travel trends"
+        "conversational trip planning, traveler matching, predictive travel trends, "
+        "and adaptive UI driven by behavior signals"
     )
     
     # API configuration
@@ -65,6 +66,11 @@ class Settings(BaseSettings):
     # Feature 15 — predictive trends (PBI 30)
     TREND_ANALYSIS_WINDOW_DAYS: int = 30
     TREND_EMERGENCE_SURGE_RATIO: float = 0.50  # 50% growth vs previous window marks emerging
+
+    # Feature 16 — adaptive UI (PBI 32–33)
+    ADAPTIVE_UI_ANALYSIS_WINDOW_DAYS: int = 30
+    ADAPTIVE_UI_PRIMARY_NAV_SLOTS: int = 5
+    ADAPTIVE_UI_THEME_BOOST_DELTA: float = 0.12
 
     # -----------------------------------------------------------------------
     # LLM Integration settings
