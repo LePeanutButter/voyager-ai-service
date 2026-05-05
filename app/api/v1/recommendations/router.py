@@ -128,6 +128,8 @@ async def submit_recommendation_feedback(
             "activity_id": activity_id,
             "rating": rating,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Error recording feedback: %s", e)
         raise HTTPException(status_code=500, detail="Failed to record feedback")

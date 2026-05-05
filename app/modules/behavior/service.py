@@ -280,8 +280,8 @@ class BehaviorAnalysisService:
         # Analyze price range preferences from context
         price_preferences = []
         for interaction in interactions:
-            context = interaction.get('context', {})
-            if 'price_range' in context:
+            context = interaction.get("context") or {}
+            if "price_range" in context:
                 price_preferences.append(context['price_range'])
         
         if len(price_preferences) >= 3:

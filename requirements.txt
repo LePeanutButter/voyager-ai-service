@@ -95,4 +95,20 @@ aiofiles==23.2.1
 # Monitoring and analytics
 sentry-sdk==1.38.0
 
-# Heavy ML / notebooks — see requirements-extras-ml.txt (needs compilers on some platforms).
+# ------------------------------------------------------------------------------
+# Data science / ML / notebooks (heavier stack)
+# On Windows you may need Visual Studio Build Tools; some versions lack cp313 wheels.
+# ------------------------------------------------------------------------------
+pandas==2.1.4
+scikit-learn==1.3.2
+scipy==1.11.4
+geopy==2.4.1
+geopandas==0.14.1
+
+transformers==4.36.0
+torch==2.1.1
+nltk==3.8.1
+spacy==3.7.2
+
+jupyter==1.0.0
+ipython==8.17.2
