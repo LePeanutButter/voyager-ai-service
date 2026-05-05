@@ -1,8 +1,13 @@
-"""
-ML Model Loader for Tourism Assistant.
+"""In-memory load and management of ML models for the tourism assistant.
 
-Handles loading, caching, and management of machine learning models
-for recommendations, user profiling, and traveler matching.
+Purpose:
+    Initialize recommendation, profiling, and matching models; validate them; expose metadata.
+
+Responsibilities:
+    Create artifact directory, load mock or real instances, selective reload, and shutdown.
+
+Dependencies:
+    ``numpy``, ``app.core.config.settings`` (paths and file names).
 """
 
 import os
@@ -19,8 +24,16 @@ logger = logging.getLogger(__name__)
 
 
 class BaseModel(ABC):
-    """Abstract base class for ML models."""
-    
+    """Minimal contract for asynchronously loadable models.
+
+    Important attributes:
+        model_path: Expected on-disk artifact path.
+        model_name: Logical key of the model in the manager.
+        model: Internal object or dict after load.
+        is_loaded: Availability flag for inference.
+        metadata: Version metadata and optional metrics.
+    """
+
     def __init__(self, model_path: str, model_name: str):
         self.model_path = model_path
         self.model_name = model_name
@@ -30,28 +43,50 @@ class BaseModel(ABC):
     
     @abstractmethod
     async def load_model(self) -> bool:
-        """Load the model from disk."""
+        """Loads the artifact from disk or initializes a mock.
+
+        Returns:
+            ``True`` if load succeeded.
+        """
         pass
-    
+
     @abstractmethod
     async def predict(self, data: Dict[str, Any]) -> Any:
-        """Make predictions using the loaded model."""
+        """Runs inference on a structured payload.
+
+        Args:
+            data: Inputs expected by the concrete model.
+
+        Returns:
+            Serializable output (dict or other).
+
+        Raises:
+            RuntimeError: If the model is not loaded.
+        """
         pass
-    
+
     @abstractmethod
     async def validate_model(self) -> bool:
-        """Validate that the model is working correctly."""
+        """Runs a test prediction and checks output shape.
+
+        Returns:
+            ``True`` if internal validation passes.
+        """
         pass
 
 
 class RecommendationModel(BaseModel):
-    """ML model for travel recommendations."""
-    
+    """Mock recommendation model from preferences and location."""
+
     def __init__(self, model_path: str):
         super().__init__(model_path, "recommendation_model")
     
     async def load_model(self) -> bool:
-        """Load recommendation model."""
+        """Initializes a mock collaborative-filtering structure.
+
+        Returns:
+            ``True`` unless an uncaught exception occurs (then ``False``).
+        """
         try:
             # In production, load actual ML model
             # For now, create a mock model
@@ -77,7 +112,17 @@ class RecommendationModel(BaseModel):
             return False
     
     async def predict(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate recommendation predictions."""
+        """Generates mock scores and recommendation ids.
+
+        Args:
+            data: Should include at least ``user_id``, ``location``, ``preferences``.
+
+        Returns:
+            Dict with scores, confidence, and synthetic ids.
+
+        Raises:
+            RuntimeError: If ``is_loaded`` is false.
+        """
         if not self.is_loaded:
             raise RuntimeError("Model not loaded")
         
@@ -104,7 +149,11 @@ class RecommendationModel(BaseModel):
             raise
     
     async def validate_model(self) -> bool:
-        """Validate recommendation model."""
+        """Checks that a test prediction contains required keys.
+
+        Returns:
+            ``False`` if not loaded, keys missing, or an error occurs.
+        """
         try:
             if not self.is_loaded:
                 return False
@@ -131,13 +180,17 @@ class RecommendationModel(BaseModel):
 
 
 class UserProfilingModel(BaseModel):
-    """ML model for user profiling and preference learning."""
-    
+    """Mock model inferring preferences and style from interactions."""
+
     def __init__(self, model_path: str):
         super().__init__(model_path, "user_profiling_model")
     
     async def load_model(self) -> bool:
-        """Load user profiling model."""
+        """Initializes a mock neural-network descriptor for profiling.
+
+        Returns:
+            ``True`` if initialization completes without logged error.
+        """
         try:
             # In production, load actual ML model
             self.model = {
@@ -162,7 +215,17 @@ class UserProfilingModel(BaseModel):
             return False
     
     async def predict(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate user profile predictions."""
+        """Returns simulated preferences and traits for a user.
+
+        Args:
+            data: Typically ``user_id``, ``interactions``, ``demographics``.
+
+        Returns:
+            Predicted profile with budget ranges and random confidence.
+
+        Raises:
+            RuntimeError: If the model is not loaded.
+        """
         if not self.is_loaded:
             raise RuntimeError("Model not loaded")
         
@@ -190,7 +253,11 @@ class UserProfilingModel(BaseModel):
             raise
     
     async def validate_model(self) -> bool:
-        """Validate user profiling model."""
+        """Validates minimal structure of ``predict`` output.
+
+        Returns:
+            ``True`` only if required keys are present.
+        """
         try:
             if not self.is_loaded:
                 return False
@@ -223,7 +290,11 @@ class TravelerMatchingModel(BaseModel):
         super().__init__(model_path, "traveler_matching_model")
     
     async def load_model(self) -> bool:
-        """Load traveler matching model."""
+        """Initializes a mock similarity-learning descriptor.
+
+        Returns:
+            ``True`` if mock load completes successfully.
+        """
         try:
             # In production, load actual ML model
             self.model = {
@@ -248,7 +319,17 @@ class TravelerMatchingModel(BaseModel):
             return False
     
     async def predict(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate compatibility predictions."""
+        """Computes mock compatibility score and binary recommendation.
+
+        Args:
+            data: Profiles and ids for both users.
+
+        Returns:
+            Dict with sub-scores and ``match`` / ``no_match`` label.
+
+        Raises:
+            RuntimeError: If no model is loaded.
+        """
         if not self.is_loaded:
             raise RuntimeError("Model not loaded")
         
@@ -281,7 +362,11 @@ class TravelerMatchingModel(BaseModel):
             raise
     
     async def validate_model(self) -> bool:
-        """Validate traveler matching model."""
+        """Checks that mock prediction includes ids and compatibility score.
+
+        Returns:
+            ``True`` if key checks succeed.
+        """
         try:
             if not self.is_loaded:
                 return False
@@ -309,15 +394,25 @@ class TravelerMatchingModel(BaseModel):
 
 
 class ModelManager:
-    """Manages loading and access to all ML models."""
-    
+    """Orchestrates load, validation, and reload of all registered models.
+
+    Important attributes:
+        models: Logical name → ``BaseModel`` instance map.
+        model_directory: Base directory from ``settings.MODEL_PATH``.
+        is_initialized: Whether ``load_models`` completed successfully.
+    """
+
     def __init__(self):
         self.models: Dict[str, BaseModel] = {}
         self.model_directory = settings.MODEL_PATH
         self.is_initialized = False
     
     async def load_models(self) -> bool:
-        """Load all ML models."""
+        """Creates the model directory and loads recommendation, profiling, and matching.
+
+        Returns:
+            ``False`` if any sub-load fails; ``True`` if all succeed.
+        """
         try:
             logger.info("Loading ML models...")
             
@@ -351,18 +446,33 @@ class ModelManager:
             return False
     
     def get_model(self, model_name: str) -> Optional[BaseModel]:
-        """Get a specific model by name."""
+        """Returns a loaded instance by logical key.
+
+        Args:
+            model_name: For example ``recommendation_model``.
+
+        Returns:
+            Instance or ``None`` if not registered.
+        """
         return self.models.get(model_name)
-    
+
     def is_ready(self) -> bool:
-        """Check if all models are loaded and ready."""
+        """Checks initialization and each model's ``is_loaded`` flag.
+
+        Returns:
+            ``True`` only if the manager is initialized and all models are loaded.
+        """
         if not self.is_initialized:
             return False
         
         return all(model.is_loaded for model in self.models.values())
     
     async def validate_all_models(self) -> Dict[str, bool]:
-        """Validate all loaded models."""
+        """Runs ``validate_model`` logically in parallel (sequential in code).
+
+        Returns:
+            Map of name → validation success.
+        """
         validation_results = {}
         
         for model_name, model in self.models.items():
@@ -375,7 +485,7 @@ class ModelManager:
         return validation_results
     
     def get_model_metadata(self) -> Dict[str, Dict[str, Any]]:
-        """Get metadata for all loaded models."""
+        """Exposes load state, internal metadata, and path per model."""
         metadata = {}
         
         for model_name, model in self.models.items():
@@ -388,7 +498,14 @@ class ModelManager:
         return metadata
     
     async def reload_model(self, model_name: str) -> bool:
-        """Reload a specific model."""
+        """Resets state and calls ``load_model`` again for a given name.
+
+        Args:
+            model_name: Key in ``self.models``.
+
+        Returns:
+            Boolean reload result or ``False`` if the model does not exist.
+        """
         try:
             model = self.models.get(model_name)
             if not model:
@@ -417,7 +534,7 @@ class ModelManager:
             return False
     
     async def shutdown(self):
-        """Cleanup resources when shutting down."""
+        """Marks models unloaded, clears the registry, and resets the manager."""
         logger.info("Shutting down model manager...")
         
         for model_name, model in self.models.items():

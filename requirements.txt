@@ -33,9 +33,11 @@ redis==5.0.1
 aioredis==2.0.1
 
 # Authentication and security
-python-jose[cryptography]==3.3.0
+# python-jose>=3.4.0: CVE-2024-33663 (algorithm confusion)
+python-jose[cryptography]>=3.4.0,<4
 passlib[bcrypt]==1.7.4
-python-multipart==0.0.6
+# python-multipart>=0.0.22: CVE-2024-24762, CVE-2024-53981, CVE-2026-24486
+python-multipart>=0.0.22,<1
 
 # Configuration management
 python-dotenv==1.0.0
@@ -50,7 +52,8 @@ pytest-asyncio==0.21.1
 pytest-cov==4.1.0
 
 # Development tools
-black==23.11.0
+# black>=26.3.1: CVE-2026-32274 (unsanitized cache paths)
+black>=26.3.1,<27
 isort==5.12.0
 flake8==6.1.0
 mypy==1.7.1
@@ -77,8 +80,8 @@ orjson>=3.10.0,<4
 # Rate limiting
 slowapi==0.1.9
 
-# API documentation
-fastapi-users==12.1.2
+# API documentation / auth helpers (15.x aligns with python-multipart>=0.0.22; 12.x pinned multipart==0.0.6)
+fastapi-users>=15.0.5,<16
 
 # Background task processing
 celery==5.3.4
@@ -95,4 +98,26 @@ aiofiles==23.2.1
 # Monitoring and analytics
 sentry-sdk==1.38.0
 
-# Heavy ML / notebooks — see requirements-extras-ml.txt (needs compilers on some platforms).
+# ------------------------------------------------------------------------------
+# Data science / ML / notebooks (heavier stack)
+# On Windows you may need Visual Studio Build Tools; some versions lack cp313 wheels.
+# ------------------------------------------------------------------------------
+# pandas 2.2.3+ ships cp312/cp313 wheels; geopandas>=1.1.2 requires pandas>=2.0
+pandas>=2.2.3,<3
+# 1.5.2+ provides cp313 wheels (older pins force a local C++ build on Windows/py313)
+scikit-learn>=1.5.2,<2
+scipy>=1.11.4,<2
+geopy==2.4.1
+# geopandas>=1.1.2: CVE-2025-69662 (SQL injection in read_postgis path)
+geopandas>=1.1.2,<2
+
+# transformers>=4.48.0: CVE-2024-11392/11393/11394 (unsafe deserialization)
+transformers>=4.48.0,<5
+# torch>=2.6.0: CVE-2025-32434 (CRITICAL), CVE-2024-31580/31583
+torch>=2.6.0,<3
+# nltk>=3.9.3: CVE-2025-14009, CVE-2024-39705, CVE-2026-0846 (partial mitigation for other NLTK CVEs)
+nltk>=3.9.3,<4
+spacy==3.7.2
+
+jupyter==1.0.0
+ipython==8.17.2

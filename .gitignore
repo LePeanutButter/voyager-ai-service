@@ -156,6 +156,8 @@ data/
 datasets/
 *.csv
 *.json
+!Voyager-AI-Service.postman_collection.json
+!Voyager-AI-Service.local.postman_environment.json
 *.jsonl
 *.parquet
 *.feather
@@ -170,7 +172,6 @@ tensorboard_logs/
 *.log
 
 # Model artifacts
-models/
 checkpoints/
 artifacts/
 outputs/

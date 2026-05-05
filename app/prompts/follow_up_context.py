@@ -1,15 +1,19 @@
-"""
-Follow-up / multi-turn context prompt template.
+"""Prompt templates for multi-turn follow-up messages.
 
-Used when the user sends a follow-up message (clarification, topic change,
-or continuation) and we need to inject prior conversation context to
-keep the LLM grounded in the evolving trip plan.
-"""
+Purpose:
+    Inject stable context and a recent history excerpt to keep trip planning
+    coherent in long conversations.
 
+Responsibilities:
+    Expose ``SYSTEM_PROMPT`` and ``render_follow_up_prompt`` with message truncation.
+
+Dependencies:
+    ``TravelContext``, ``ConversationMessage`` (conditional typing only).
+"""
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
-    from app.chat.schemas import ConversationMessage, TravelContext
+    from app.modules.chat.schemas import ConversationMessage, TravelContext
 
 
 SYSTEM_PROMPT = """You are an expert AI travel planning assistant for the Voyager platform.
@@ -30,17 +34,16 @@ def render_follow_up_prompt(
     recent_history: List["ConversationMessage"],
     max_history_turns: int = 6,
 ) -> str:
-    """
-    Build the prompt for a follow-up / multi-turn message.
+    """Builds the user prompt for a continuation message.
 
     Args:
-        user_message      : The raw user message.
-        context           : Current extracted travel context.
-        recent_history    : Recent conversation messages (newest-last order).
-        max_history_turns : Number of recent turns to include in the prompt.
+        user_message: Latest user message.
+        context: Current travel context.
+        recent_history: Recent messages (chronological, newest last).
+        max_history_turns: Max recent turns to include.
 
     Returns:
-        Formatted prompt string for the user turn.
+        String with context blocks, truncated history, and current message.
     """
     # Summarise established context
     context_lines = ["## Established Trip Context"]

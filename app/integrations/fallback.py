@@ -1,25 +1,86 @@
-"""
-Rule-based fallback responder.
+"""Deterministic responses when there is no LLM or it fails.
 
-Used when LLM_PROVIDER == "none" or when all LLM calls fail.
-Generates coherent, context-aware travel responses using deterministic
-logic derived from the extracted TravelContext — no hardcoded strings,
-no fake AI.
+Purpose:
+    Generate coherent text from ``TravelContext`` and precomputed suggestions,
+    without invented booking strings or real-time data.
 
-All public methods mirror the signature expectations of ChatService so
-they are drop-in replacements for LLM-generated content.
+Responsibilities:
+    Format itineraries, intros, and budget or follow-up messages;
+    expose an API aligned with ``ChatService`` expectations.
+
+Dependencies:
+    ``TravelContext`` and ``Suggestion`` types (``TYPE_CHECKING`` only).
 """
 
 import logging
 from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
-    from app.chat.schemas import TravelContext, Suggestion
+    from app.modules.chat.schemas import TravelContext, Suggestion
 
 logger = logging.getLogger(__name__)
 
 
+def _format_cost(s: "Suggestion", context: "TravelContext") -> str:
+    if not s.estimated_cost_usd or s.estimated_cost_usd <= 0:
+        return "(free)"
+    suffix = " per person" if context.group_size and context.group_size > 1 else ""
+    return f"(~${s.estimated_cost_usd:,.0f}{suffix})"
+
+
+def _parse_day_activity_name(name: str) -> Optional[tuple[str, str]]:
+    if not name.startswith("Day "):
+        return None
+    try:
+        day_num, act_name = name.split(":", 1)
+        return day_num.strip(), act_name.strip()
+    except ValueError:
+        return None
+
+
+def _group_activities_by_day(acts: List["Suggestion"]) -> tuple[dict[str, list[tuple[str, "Suggestion"]]], list["Suggestion"]]:
+    days_dict: dict[str, list[tuple[str, "Suggestion"]]] = {}
+    others: list["Suggestion"] = []
+    for suggestion in acts:
+        parsed = _parse_day_activity_name(suggestion.name)
+        if parsed is None:
+            others.append(suggestion)
+            continue
+        day_num, act_name = parsed
+        if day_num not in days_dict:
+            days_dict[day_num] = []
+        days_dict[day_num].append((act_name, suggestion))
+    return days_dict, others
+
+
+def _render_day_sections(
+    parts: list[str],
+    days_dict: dict[str, list[tuple[str, "Suggestion"]]],
+    context: "TravelContext",
+) -> None:
+    for day_num, day_acts in days_dict.items():
+        parts.append(f"\n{day_num}:")
+        for act_name, suggestion in day_acts:
+            parts.append(f"- {act_name} {_format_cost(suggestion, context)}")
+
+
+def _render_other_sections(parts: list[str], others: list["Suggestion"], context: "TravelContext") -> None:
+    if not others:
+        return
+    parts.append("")
+    for suggestion in others:
+        parts.append(f"- {suggestion.name} {_format_cost(suggestion, context)}")
+
+
 def _format_destinations(dests: List["Suggestion"]) -> str:
+    """Formats the first destination suggestion as a highlighted block.
+
+    Args:
+        dests: List of suggestions filtered as destinations.
+
+    Returns:
+        Markdown text or empty string.
+    """
     if not dests:
         return ""
     d = dests[0]
@@ -27,48 +88,36 @@ def _format_destinations(dests: List["Suggestion"]) -> str:
 
 
 def _format_activities(acts: List["Suggestion"], context: "TravelContext") -> str:
+    """Groups activities by day (``Day N:`` prefix) and adds estimated costs.
+
+    Args:
+        acts: Suggestions that are not the primary destination.
+        context: Context for per-person cost wording.
+
+    Returns:
+        Text block with per-day lists and loose activities.
+    """
     if not acts:
         return ""
-        
-    parts = []
-    days_dict = {}
-    others = []
-    for s in acts:
-        if s.name.startswith("Day "):
-            try:
-                day_num, act_name = s.name.split(":", 1)
-                day_num = day_num.strip()
-                act_name = act_name.strip()
-                if day_num not in days_dict:
-                    days_dict[day_num] = []
-                days_dict[day_num].append((act_name, s))
-            except ValueError:
-                others.append(s)
-        else:
-            others.append(s)
 
-    for day_num, day_acts in days_dict.items():
-        parts.append(f"\n{day_num}:")
-        for act_name, s in day_acts:
-            cost_str = "(free)"
-            if s.estimated_cost_usd and s.estimated_cost_usd > 0:
-                suffix = " per person" if context.group_size and context.group_size > 1 else ""
-                cost_str = f"(~${s.estimated_cost_usd:,.0f}{suffix})"
-            parts.append(f"- {act_name} {cost_str}")
-
-    if others:
-        parts.append("")
-        for s in others:
-            cost_str = "(free)"
-            if s.estimated_cost_usd and s.estimated_cost_usd > 0:
-                suffix = " per person" if context.group_size and context.group_size > 1 else ""
-                cost_str = f"(~${s.estimated_cost_usd:,.0f}{suffix})"
-            parts.append(f"- {s.name} {cost_str}")
+    parts: list[str] = []
+    days_dict, others = _group_activities_by_day(acts)
+    _render_day_sections(parts, days_dict, context)
+    _render_other_sections(parts, others, context)
 
     return "\n".join(parts)
 
 
 def _format_itinerary(suggestions: List["Suggestion"], context: "TravelContext") -> str:
+    """Combines destination and activity formatting from typed suggestions.
+
+    Args:
+        suggestions: Mix of destinations and activities.
+        context: Travel context for costs.
+
+    Returns:
+        Itinerary text or empty string.
+    """
     if not suggestions:
         return ""
 
@@ -76,11 +125,11 @@ def _format_itinerary(suggestions: List["Suggestion"], context: "TravelContext")
     acts = [s for s in suggestions if s.activity_type != "destination"]
 
     parts = []
-    
+
     dest_str = _format_destinations(dests)
     if dest_str:
         parts.append(dest_str)
-        
+
     acts_str = _format_activities(acts, context)
     if acts_str:
         parts.append(acts_str)
@@ -89,6 +138,14 @@ def _format_itinerary(suggestions: List["Suggestion"], context: "TravelContext")
 
 
 def _build_intro_string(context: "TravelContext") -> str:
+    """Builds an intro phrase (duration, budget, style, group).
+
+    Args:
+        context: Merged trip state.
+
+    Returns:
+        English phrase to prepend to the reply body.
+    """
     intro_words = []
     if context.duration_days:
         intro_words.append(f"a {context.duration_days}-day")
@@ -122,7 +179,15 @@ def build_planning_reply(
     context: "TravelContext",
     suggestions: List["Suggestion"],
 ) -> str:
-    """Build a reply for a travel planning intent."""
+    """Builds the reply for a travel-planning intent.
+
+    Args:
+        context: Context extracted from the message.
+        suggestions: Suggestions from rules or engine.
+
+    Returns:
+        Text ready to show the user.
+    """
     parts = []
 
     intro_str = _build_intro_string(context)
@@ -145,7 +210,16 @@ def build_budget_reply(
     suggestions: List["Suggestion"],
     old_budget: Optional[float],
 ) -> str:
-    """Build a reply acknowledging a budget constraint update."""
+    """Builds the reply after updating budget in context.
+
+    Args:
+        context: Context with updated ``budget_usd``.
+        suggestions: Recalculated suggestions.
+        old_budget: Previous budget if any.
+
+    Returns:
+        Text acknowledging the change and listing itinerary when present.
+    """
     parts = []
 
     if old_budget is not None and context.budget_usd is not None:
@@ -170,7 +244,16 @@ def build_follow_up_reply(
     suggestions: List["Suggestion"],
     user_message: str,
 ) -> str:
-    """Build a generic follow-up reply."""
+    """Builds a generic follow-up reply from keyword heuristics.
+
+    Args:
+        context: Current context.
+        suggestions: Optional suggestions.
+        user_message: Latest user message (English expected for heuristics).
+
+    Returns:
+        Text with thematic acknowledgment and recommendations when present.
+    """
     msg_lower = user_message.lower()
     parts = []
 
@@ -196,7 +279,11 @@ def build_follow_up_reply(
 
 
 def build_greeting_reply() -> str:
-    """Return a welcoming introduction message."""
+    """Returns the assistant's static welcome message.
+
+    Returns:
+        Multi-line text describing bot capabilities.
+    """
     return (
         "Hello! I'm your AI travel planning assistant. 🌍\n\n"
         "I can help you:\n"
@@ -214,7 +301,14 @@ def build_greeting_reply() -> str:
 # ---------------------------------------------------------------------------
 
 def _identify_missing_context(context: "TravelContext") -> str:
-    """Return a human-readable list of missing context fields."""
+    """Summarizes missing fields to ask the user for clarifications.
+
+    Args:
+        context: Partial context.
+
+    Returns:
+        Human-readable string joined with `` and `` (may be empty if nothing missing).
+    """
     missing: List[str] = []
     if not context.destination:
         missing.append("destination")
@@ -226,7 +320,14 @@ def _identify_missing_context(context: "TravelContext") -> str:
 
 
 def _budget_tier(budget_usd: Optional[float]) -> str:
-    """Classify budget as 'budget', 'mid-range', or 'premium'."""
+    """Classifies budget into product bands.
+
+    Args:
+        budget_usd: Amount in USD or ``None``.
+
+    Returns:
+        Label ``budget``, ``mid-range``, or ``premium``.
+    """
     if budget_usd is None:
         return "mid-range"
     if budget_usd < 500:
