@@ -93,3 +93,20 @@ class WeeklyTrendsDigestResponse(BaseModel):
     micro_trends: List[MicroTrendOpportunity]
     partner_notifications: List[PartnerTrendNotification]
     next_refresh_note: str = "Schedulable weekly analysis (replace with job + queue in production)."
+
+
+class TrendSignalIngestRow(BaseModel):
+    destination_id: str
+    name: str
+    country: str
+    tags: List[str] = Field(default_factory=list)
+    previous: int = Field(ge=0)
+    current: int = Field(ge=0)
+
+
+class TrendSignalIngestRequest(BaseModel):
+    rows: List[TrendSignalIngestRow] = Field(min_length=1)
+
+
+class TrendSegmentsIngestRequest(BaseModel):
+    segments: Dict[str, Any] = Field(min_length=1)

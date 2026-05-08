@@ -1,12 +1,12 @@
-"""Traveler matching: scoring, ranking, and connection lifecycle (demo data).
+"""Traveler matching: scoring, ranking, and connection lifecycle (data-driven).
 
 Purpose:
     Score candidate travelers, explain multidimensional compatibility,
     and manage simple connection records with optional learning feedback.
 
 Responsibilities:
-    Mock profile resolution, compatibility math, buddy lists, and weight updates
-    via ``MatchingLearningStore``.
+    Profile resolution from ingested data, compatibility math, buddy lists,
+    and weight updates via ``MatchingLearningStore``.
 
 Dependencies:
     ``settings``, enums, ``matching.schemas``, ``model_manager``, ``MatchingLearningStore``.
@@ -14,7 +14,10 @@ Dependencies:
 
 from typing import List, Dict, Any, Optional
 import logging
+import json
 from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import desc, select
 
 from app.modules.common.schemas.enums import ConnectionOutcome, TravelPreference
 from app.modules.matching.schemas import (
@@ -23,6 +26,8 @@ from app.modules.matching.schemas import (
     MatchingResponse,
 )
 from app.core.config import settings
+from app.db import database as db_database
+from app.db.runtime_models import MatchingConnectionRecord, MatchingProfileRecord
 from app.ml.learning_store import MatchingLearningStore
 
 logger = logging.getLogger(__name__)
@@ -34,8 +39,8 @@ class MatchingService:
     Attributes:
         model_manager: Loads optional ``traveler_matching_model`` for blended scores.
         learning_store: Persists and adjusts dimension weights from outcomes.
-        connections: In-memory connection documents keyed by synthetic id.
-        user_profiles: Legacy mock map (supplemented by ``_get_user_profile``).
+        connections: Connection documents persisted in runtime DB tables.
+        user_profiles: Ingested profile map (resolved by ``_get_user_profile``).
     """
 
     def __init__(self, model_manager, learning_store: MatchingLearningStore):
@@ -47,8 +52,40 @@ class MatchingService:
         """
         self.model_manager = model_manager
         self.learning_store = learning_store
-        self.connections = {}  # In-memory storage (replace with database in production)
-        self.user_profiles = {}  # Mock user profiles for matching
+        db_database.init_db_engine()
+        self.user_profiles: Dict[str, Dict[str, Any]] = {}
+
+    @staticmethod
+    def _db():
+        assert db_database.SessionLocal is not None
+        return db_database.SessionLocal()
+
+    def ingest_profiles(self, profiles: List[Dict[str, Any]]) -> int:
+        """Upsert profiles used by matching endpoints."""
+        count = 0
+        with self._db() as db:
+            for p in profiles:
+                user_id = str(p.get("user_id", "")).strip()
+                if not user_id:
+                    continue
+                self.user_profiles[user_id] = dict(p)
+                row = db.get(MatchingProfileRecord, user_id)
+                payload = json.dumps(p)
+                if row is None:
+                    db.add(
+                        MatchingProfileRecord(
+                            user_id=user_id,
+                            profile_json=payload,
+                            updated_at=datetime.now(timezone.utc),
+                        )
+                    )
+                else:
+                    row.profile_json = payload
+                    row.updated_at = datetime.now(timezone.utc)
+                count += 1
+            db.commit()
+        logger.info("Matching profiles ingested: %s", count)
+        return count
     
     def find_travel_partners(self, request: TravelerMatchRequest) -> MatchingResponse:
         """Scores candidates, filters by minimum compatibility, and returns ranked matches.
@@ -178,7 +215,7 @@ class MatchingService:
             message: Optional opener text.
 
         Returns:
-            Connection document including synthetic ``connection_id``.
+            Connection document including generated ``connection_id``.
 
         Raises:
             Exception: Logged and re-raised on persistence failures.
@@ -198,9 +235,20 @@ class MatchingService:
                 'updated_at': datetime.now(timezone.utc)
             }
             
-            # Store connection
-            if connection_id not in self.connections:
-                self.connections[connection_id] = connection
+            with self._db() as db:
+                db.add(
+                    MatchingConnectionRecord(
+                        connection_id=connection_id,
+                        initiator_id=user_id,
+                        target_user_id=target_user_id,
+                        message=message,
+                        status="pending",
+                        response_message=None,
+                        created_at=connection["created_at"],
+                        updated_at=connection["updated_at"],
+                    )
+                )
+                db.commit()
             
             return connection
             
@@ -221,19 +269,32 @@ class MatchingService:
         try:
             logger.info("Fetching user connections")
             
-            user_connections = []
-            
-            for connection in self.connections.values():
-                if (connection['initiator_id'] == user_id or 
-                    connection['target_user_id'] == user_id):
-                    
-                    if status is None or connection['status'] == status:
-                        user_connections.append(connection)
-            
-            # Sort by creation date (newest first)
-            user_connections.sort(key=lambda x: x['created_at'], reverse=True)
-            
-            return user_connections
+            with self._db() as db:
+                rows = db.scalars(
+                    select(MatchingConnectionRecord)
+                    .where(
+                        (MatchingConnectionRecord.initiator_id == user_id)
+                        | (MatchingConnectionRecord.target_user_id == user_id)
+                    )
+                    .order_by(desc(MatchingConnectionRecord.created_at))
+                ).all()
+            out: List[Dict[str, Any]] = []
+            for row in rows:
+                if status and row.status != status:
+                    continue
+                out.append(
+                    {
+                        "connection_id": row.connection_id,
+                        "initiator_id": row.initiator_id,
+                        "target_user_id": row.target_user_id,
+                        "message": row.message,
+                        "status": row.status,
+                        "response_message": row.response_message,
+                        "created_at": row.created_at,
+                        "updated_at": row.updated_at,
+                    }
+                )
+            return out
             
         except Exception as e:
             logger.error(f"Error fetching connections: {str(e)}")
@@ -253,29 +314,35 @@ class MatchingService:
         try:
             logger.info("Responding to user connection")
             
-            connection = self.connections.get(connection_id)
-            if not connection:
-                return None
-            
-            # Update connection
-            connection['status'] = response
-            connection['response_message'] = message
-            connection['updated_at'] = datetime.now(timezone.utc)
-            
-            self.connections[connection_id] = connection
-            
-            return connection
+            with self._db() as db:
+                row = db.get(MatchingConnectionRecord, connection_id)
+                if not row:
+                    return None
+                row.status = response
+                row.response_message = message
+                row.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                return {
+                    "connection_id": row.connection_id,
+                    "initiator_id": row.initiator_id,
+                    "target_user_id": row.target_user_id,
+                    "message": row.message,
+                    "status": row.status,
+                    "response_message": row.response_message,
+                    "created_at": row.created_at,
+                    "updated_at": row.updated_at,
+                }
             
         except Exception as e:
             logger.error(f"Error responding to connection: {str(e)}")
             return None
     
     def get_travel_buddy_recommendations(self, user_id: str, location: Optional[str] = None, limit: int = 10) -> List[TravelerMatch]:
-        """Ranks all mock users by simple compatibility, optionally by location.
+        """Ranks ingested users by simple compatibility, optionally by location.
 
         Args:
             user_id: Seeker; excluded from results.
-            location: If set, requires exact mock ``location`` string match.
+            location: If set, requires exact ``location`` string match.
             limit: Max buddies to return.
 
         Returns:
@@ -314,7 +381,7 @@ class MatchingService:
                         age=user_data.get('age'),
                         compatibility_score=compatibility,
                         common_preferences=user_data.get('common_preferences', []),
-                        travel_style_match=compatibility,  # Simplified for demo
+                        travel_style_match=compatibility,
                         bio=user_data.get('bio'),
                         profile_image=user_data.get('profile_image')
                     )
@@ -336,7 +403,7 @@ class MatchingService:
             user_id: Rater.
             target_user_id: Other party in the match.
             rating: 1–5 score consumed by ``_update_matching_algorithm``.
-            feedback_text: Optional free-text note (logged only in demo).
+            feedback_text: Optional free-text note.
 
         Raises:
             Exception: Propagates after logging on unexpected failures.
@@ -358,106 +425,41 @@ class MatchingService:
     # Private helper methods
     
     def _get_user_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Resolves a traveler dict from the embedded mock catalog."""
-        # Mock implementation - in production, query database
-        mock_profiles = {
-            'user1': {
-                'user_id': 'user1',
-                'name': 'John Doe',
-                'age': 28,
-                'location': 'New York',
-                'preferences': [TravelPreference.CULTURAL, TravelPreference.FOODIE],
-                'travel_style': 'mid-range',
-                'budget_tier': 'mid',
-                'pace': 'moderate',
-                'personality_tags': {'explorer', 'social', 'curious'},
-                'bio': 'Love exploring new cultures and trying local cuisine',
-            },
-            'user2': {
-                'user_id': 'user2',
-                'name': 'Jane Smith',
-                'age': 32,
-                'location': 'San Francisco',
-                'preferences': [TravelPreference.ADVENTURE, TravelPreference.NATURE],
-                'travel_style': 'budget',
-                'budget_tier': 'low',
-                'pace': 'intense',
-                'personality_tags': {'explorer', 'calm'},
-                'bio': 'Adventure seeker who loves hiking and outdoor activities',
-            },
-            'user3': {
-                'user_id': 'user3',
-                'name': 'Mike Johnson',
-                'age': 25,
-                'location': 'Chicago',
-                'preferences': [TravelPreference.RELAXATION, TravelPreference.BEACH],
-                'travel_style': 'luxury',
-                'budget_tier': 'high',
-                'pace': 'relaxed',
-                'personality_tags': {'social', 'curious', 'foodie'},
-                'bio': 'Enjoy relaxing beach vacations and luxury travel',
-            },
-        }
-        
-        return mock_profiles.get(user_id)
+        """Resolves a traveler dict from ingested profiles."""
+        profile = self.user_profiles.get(user_id)
+        if profile:
+            return profile
+        with self._db() as db:
+            row = db.get(MatchingProfileRecord, user_id)
+            if not row:
+                return None
+            parsed = json.loads(row.profile_json)
+            self.user_profiles[user_id] = parsed
+            return parsed
     
     def _get_candidate_travelers(self, request: TravelerMatchRequest) -> List[Dict[str, Any]]:
-        """Returns all mock users except the requester, with optional location presence filter."""
-        # Mock implementation - in production, query database with filters
+        """Returns ingested users except requester, with optional location filter."""
         all_users = self._get_all_users()
         
         # Filter out the requesting user
         candidates = [user for user in all_users if user['user_id'] != request.user_id]
         
-        # Apply location filter (mock)
+        # Apply location filter
         if request.location:
             candidates = [user for user in candidates if user.get('location')]
         
         return candidates
     
     def _get_all_users(self) -> List[Dict[str, Any]]:
-        """Full mock roster used by buddy recommendations and candidate expansion."""
-        return [
-            {
-                'user_id': 'user1',
-                'name': 'John Doe',
-                'age': 28,
-                'location': 'New York',
-                'preferences': [TravelPreference.CULTURAL, TravelPreference.FOODIE],
-                'travel_style': 'mid-range',
-                'budget_tier': 'mid',
-                'pace': 'moderate',
-                'personality_tags': {'explorer', 'social', 'curious'},
-                'bio': 'Love exploring new cultures and trying local cuisine',
-                'profile_image': None,
-            },
-            {
-                'user_id': 'user2',
-                'name': 'Jane Smith',
-                'age': 32,
-                'location': 'San Francisco',
-                'preferences': [TravelPreference.ADVENTURE, TravelPreference.NATURE],
-                'travel_style': 'budget',
-                'budget_tier': 'low',
-                'pace': 'intense',
-                'personality_tags': {'explorer', 'calm'},
-                'bio': 'Adventure seeker who loves hiking and outdoor activities',
-                'profile_image': None,
-            },
-            {
-                'user_id': 'user3',
-                'name': 'Mike Johnson',
-                'age': 25,
-                'location': 'Chicago',
-                'preferences': [TravelPreference.RELAXATION, TravelPreference.BEACH],
-                'travel_style': 'luxury',
-                'budget_tier': 'high',
-                'pace': 'relaxed',
-                'personality_tags': {'social', 'curious', 'foodie'},
-                'bio': 'Enjoy relaxing beach vacations and luxury travel',
-                'profile_image': None,
-            },
-        ]
+        """Full ingested roster used by buddy recommendations and candidate expansion."""
+        with self._db() as db:
+            rows = db.scalars(select(MatchingProfileRecord)).all()
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            parsed = json.loads(row.profile_json)
+            self.user_profiles[parsed["user_id"]] = parsed
+            out.append(parsed)
+        return out
     
     def _calculate_compatibility_scores(self, user_profile: Dict[str, Any], candidates: List[Dict[str, Any]], request: TravelerMatchRequest) -> List[Dict[str, Any]]:
         """Scores each candidate, boosts overlap with requested preferences, and attaches commons."""
@@ -467,7 +469,7 @@ class MatchingService:
             compatibility_score = self._calculate_simple_compatibility(user_profile, candidate)
             if request.preferences:
                 req_p = {p.value for p in request.preferences}
-                cand_p = {p.value for p in candidate.get("preferences", [])}
+                cand_p = {getattr(p, "value", str(p)) for p in candidate.get("preferences", [])}
                 if req_p & cand_p:
                     compatibility_score = min(1.0, compatibility_score + 0.06)
 
@@ -594,8 +596,8 @@ class MatchingService:
         self, user_a: Dict[str, Any], user_b: Dict[str, Any]
     ) -> Dict[str, float]:
         """PBI 26: per-dimension 0–1 signals (interests, style, budget, pace, personality)."""
-        prefs_a = {p.value for p in user_a.get("preferences", [])}
-        prefs_b = {p.value for p in user_b.get("preferences", [])}
+        prefs_a = {getattr(p, "value", str(p)) for p in user_a.get("preferences", [])}
+        prefs_b = {getattr(p, "value", str(p)) for p in user_b.get("preferences", [])}
         union = prefs_a | prefs_b
         interests = len(prefs_a & prefs_b) / len(union) if union else 0.55
 

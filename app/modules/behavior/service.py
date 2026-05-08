@@ -14,10 +14,15 @@ Dependencies:
 from typing import List, Dict, Any, Optional, Tuple
 import asyncio
 import logging
+import json
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict, Counter
 import statistics
 
+from sqlalchemy import desc, select
+
+from app.db import database as db_database
+from app.db.runtime_models import BehaviorEventRecord
 from app.modules.common.schemas.base import DateRange
 from app.modules.common.schemas.enums import InteractionType, TravelPreference
 from app.modules.behavior.schemas import (
@@ -47,7 +52,7 @@ class BehaviorAnalysisService:
             model_manager: Optional ``ModelManager`` for future ML integration.
         """
         self.model_manager = model_manager
-        self.behavior_data = {}  # In-memory storage (replace with database in production)
+        db_database.init_db_engine()
         self.preference_weights = {
             InteractionType.VIEW: 0.1,
             InteractionType.CLICK: 0.2,
@@ -64,6 +69,11 @@ class BehaviorAnalysisService:
         self.REJECTION_THRESHOLD = 3  # Number of rejections to detect pattern
         self.PREFERENCE_CONFIDENCE_THRESHOLD = 0.7
         self.MIN_INTERACTIONS_FOR_ANALYSIS = 5
+
+    @staticmethod
+    def _db():
+        assert db_database.SessionLocal is not None
+        return db_database.SessionLocal()
     
     async def track_interaction(self, request: BehaviorTrackingRequest) -> bool:
         """Appends a normalized interaction and trims history to 30 days.
@@ -78,32 +88,20 @@ class BehaviorAnalysisService:
         try:
             user_id = request.user_id
             
-            # Initialize user behavior data if not exists
-            if user_id not in self.behavior_data:
-                self.behavior_data[user_id] = {
-                    'interactions': [],
-                    'patterns': [],
-                    'last_analysis': None
-                }
-            
-            # Store interaction
-            interaction = {
-                'interaction_type': request.interaction_type,
-                'activity_id': request.activity_id,
-                'activity_category': request.activity_category,
-                'session_duration': request.session_duration,
-                'context': request.context,
-                'timestamp': datetime.now(timezone.utc)
-            }
-            
-            self.behavior_data[user_id]['interactions'].append(interaction)
-            
-            # Keep only recent interactions (last 30 days)
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
-            self.behavior_data[user_id]['interactions'] = [
-                i for i in self.behavior_data[user_id]['interactions']
-                if i['timestamp'] > cutoff_date
-            ]
+            now = datetime.now(timezone.utc)
+            with self._db() as db:
+                db.add(
+                    BehaviorEventRecord(
+                        user_id=user_id,
+                        interaction_type=str(request.interaction_type),
+                        activity_id=request.activity_id,
+                        activity_category=request.activity_category,
+                        session_duration=request.session_duration,
+                        context_json=json.dumps(request.context or {}),
+                        timestamp=now,
+                    )
+                )
+                db.commit()
             
             logger.info(f"Tracked {request.interaction_type} interaction for user {user_id}")
             return True
@@ -127,17 +125,28 @@ class BehaviorAnalysisService:
         try:
             user_id = request.user_id
             
-            if user_id not in self.behavior_data:
-                raise ValueError(f"No behavior data found for user {user_id}")
-            
-            user_data = self.behavior_data[user_id]
-            interactions = user_data['interactions']
-            
-            # Filter interactions by analysis period
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=request.analysis_period_days)
+            with self._db() as db:
+                rows = db.scalars(
+                    select(BehaviorEventRecord)
+                    .where(
+                        (BehaviorEventRecord.user_id == user_id)
+                        & (BehaviorEventRecord.timestamp > cutoff_date)
+                    )
+                    .order_by(desc(BehaviorEventRecord.timestamp))
+                ).all()
+            if not rows:
+                raise ValueError(f"No behavior data found for user {user_id}")
             recent_interactions = [
-                i for i in interactions 
-                if i['timestamp'] > cutoff_date
+                {
+                    "interaction_type": r.interaction_type,
+                    "activity_id": r.activity_id,
+                    "activity_category": r.activity_category,
+                    "session_duration": r.session_duration,
+                    "context": json.loads(r.context_json or "{}"),
+                    "timestamp": r.timestamp,
+                }
+                for r in rows
             ]
             
             if len(recent_interactions) < self.MIN_INTERACTIONS_FOR_ANALYSIS:
@@ -162,9 +171,6 @@ class BehaviorAnalysisService:
             
             # Calculate confidence score
             confidence_score = self._calculate_confidence_score(recent_interactions, patterns)
-            
-            # Update last analysis timestamp
-            user_data['last_analysis'] = datetime.now(timezone.utc)
             
             return ImplicitPreferenceUpdate(
                 user_id=user_id,
@@ -401,10 +407,23 @@ class BehaviorAnalysisService:
         Returns:
             Stats dict, or ``{"error": ...}`` if no data exists.
         """
-        if user_id not in self.behavior_data:
+        with self._db() as db:
+            rows = db.scalars(
+                select(BehaviorEventRecord).where(BehaviorEventRecord.user_id == user_id)
+            ).all()
+        if not rows:
             return {"error": "No behavior data found"}
-        
-        interactions = self.behavior_data[user_id]['interactions']
+        interactions = [
+            {
+                "interaction_type": r.interaction_type,
+                "activity_id": r.activity_id,
+                "activity_category": r.activity_category,
+                "session_duration": r.session_duration,
+                "context": json.loads(r.context_json or "{}"),
+                "timestamp": r.timestamp,
+            }
+            for r in rows
+        ]
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         recent_interactions = [i for i in interactions if i['timestamp'] > cutoff_date]
         
@@ -413,7 +432,7 @@ class BehaviorAnalysisService:
         category_counts = Counter([i.get('activity_category', 'unknown') for i in recent_interactions])
         
         # Recent patterns
-        recent_patterns = self.behavior_data[user_id].get('patterns', [])[-5:]  # Last 5 patterns
+        recent_patterns: List[BehaviorPattern] = []
         
         return {
             "user_id": user_id,
@@ -422,5 +441,40 @@ class BehaviorAnalysisService:
             "interaction_breakdown": dict(interaction_counts),
             "category_breakdown": dict(category_counts),
             "recent_patterns": [p.dict() for p in recent_patterns],
-            "last_analysis": self.behavior_data[user_id].get('last_analysis')
+            "last_analysis": None
         }
+
+    def clear_user_behavior_data(self, user_id: str) -> bool:
+        with self._db() as db:
+            rows = db.scalars(
+                select(BehaviorEventRecord).where(BehaviorEventRecord.user_id == user_id)
+            ).all()
+            if not rows:
+                return False
+            for row in rows:
+                db.delete(row)
+            db.commit()
+            return True
+
+    def get_recent_interactions(self, user_id: str, days: int) -> List[Dict[str, Any]]:
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+        with self._db() as db:
+            rows = db.scalars(
+                select(BehaviorEventRecord)
+                .where(
+                    (BehaviorEventRecord.user_id == user_id)
+                    & (BehaviorEventRecord.timestamp > cutoff_date)
+                )
+                .order_by(desc(BehaviorEventRecord.timestamp))
+            ).all()
+        return [
+            {
+                "interaction_type": r.interaction_type,
+                "activity_id": r.activity_id,
+                "activity_category": r.activity_category,
+                "session_duration": r.session_duration,
+                "context": json.loads(r.context_json or "{}"),
+                "timestamp": r.timestamp,
+            }
+            for r in rows
+        ]

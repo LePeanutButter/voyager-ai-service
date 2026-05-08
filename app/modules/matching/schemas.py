@@ -65,3 +65,21 @@ class ConnectionOutcomeResponse(BaseModel):
 
     status: str
     updated_weights: Dict[str, float]
+
+
+class MatchingProfile(BaseModel):
+    user_id: str
+    name: str
+    age: Optional[int] = None
+    location: Optional[str] = None
+    preferences: List[TravelPreference] = Field(default_factory=list)
+    travel_style: str = "mid-range"
+    budget_tier: str = "mid"
+    pace: str = "moderate"
+    personality_tags: List[str] = Field(default_factory=list)
+    bio: Optional[str] = None
+    profile_image: Optional[str] = None
+
+
+class MatchingProfilesIngestRequest(BaseModel):
+    profiles: List[MatchingProfile] = Field(min_length=1)

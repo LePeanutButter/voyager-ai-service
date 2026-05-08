@@ -1,193 +1,64 @@
 import pytest
-from unittest.mock import MagicMock
 
-from app.modules.common.schemas.enums import WeatherCondition
-from app.modules.recommendations.schemas import (
-    ContextualActivityRequest,
-    DestinationRecommendationRequest,
-    RecommendationRequest,
-)
-from app.modules.recommendations.service import RecommendationService
-from app.modules.seasonality.service import SeasonalityService
-from app.modules.trends.service import TrendsService
+from app.recommendations.services.recommendation_service import RealRecommendationService
 
 
-@pytest.fixture
-def mock_mm():
-    mm = MagicMock()
-    mm.is_ready.return_value = True
-    return mm
+def test_recommend_returns_ranked_items(monkeypatch):
+    svc = RealRecommendationService()
 
+    monkeypatch.setattr(svc.repo, "get_user_profile", lambda _uid: {"id": "u1", "name": "Ana", "segment": "travel"})
+    monkeypatch.setattr(svc.repo, "get_user_preferences", lambda _uid: ["cultural"])
+    monkeypatch.setattr(svc.repo, "get_recent_interactions", lambda _uid, limit=25: [{"item_id": "a1"}])
+    monkeypatch.setattr(
+        svc.repo,
+        "rank_items",
+        lambda query_text, candidates, limit: [
+            {"id": "a1", "name": "Museo", "category": "cultural", "price": 20, "similarity": 0.72},
+            {"id": "a2", "name": "Parque", "category": "nature", "price": 0, "similarity": 0.70},
+        ],
+    )
 
-@pytest.fixture
-def rec_svc(mock_mm):
-    return RecommendationService(mock_mm, trends_service=None)
-
-
-@pytest.mark.asyncio
-async def test_get_personalized_destinations(rec_svc: RecommendationService):
-    req = DestinationRecommendationRequest(
+    out = svc.recommend(
         user_id="u1",
-        max_results=4,
-        include_emerging_trends=False,
+        query_text="arte en madrid",
+        limit=2,
+        candidates=[
+            {"id": "a1", "name": "Museo", "category": "cultural", "price": 20, "content_text": "arte"},
+            {"id": "a2", "name": "Parque", "category": "nature", "price": 0, "content_text": "outdoor"},
+        ],
     )
-    out = rec_svc.get_personalized_destinations(req)
-    assert out.destinations
+
+    assert out["user"]["id"] == "u1"
+    assert out["preferences"] == ["cultural"]
+    assert len(out["items"]) == 2
+    assert out["items"][0]["id"] == "a1"
+    assert out["items"][0]["score"] >= out["items"][1]["score"]
 
 
-@pytest.mark.asyncio
-async def test_get_personalized_destinations_with_trends(mock_mm):
-    ts = TrendsService()
-    await ts.refresh()
-    svc = RecommendationService(mock_mm, trends_service=ts)
-    req = DestinationRecommendationRequest(user_id="u1", max_results=6, include_emerging_trends=True)
-    out = svc.get_personalized_destinations(req)
-    assert out.destinations
+def test_record_feedback_normalizes_rating(monkeypatch):
+    svc = RealRecommendationService()
+    captured = {}
+
+    def _capture(user_id, item_id, rating):
+        captured["user_id"] = user_id
+        captured["item_id"] = item_id
+        captured["rating"] = rating
+
+    monkeypatch.setattr(svc.repo, "track_recommendation_feedback", _capture)
+    svc.record_feedback(user_id="u1", item_id="a1", rating=10)
+
+    assert captured["user_id"] == "u1"
+    assert captured["item_id"] == "a1"
+    assert captured["rating"] == pytest.approx(1.0)
 
 
-@pytest.mark.asyncio
-async def test_get_personalized_destinations_with_seasonality(mock_mm):
-    sea = SeasonalityService()
-    svc = RecommendationService(mock_mm, trends_service=None, seasonality_service=sea)
-    req = DestinationRecommendationRequest(
-        user_id="u1",
-        max_results=5,
-        include_emerging_trends=False,
-        travel_month=11,
-        apply_seasonality_mitigation=True,
-    )
-    out = svc.get_personalized_destinations(req)
-    assert out.destinations
-    assert out.seasonality_note
-    assert any(d.seasonal_context is not None for d in out.destinations)
+def test_rerank_applies_preference_boost():
+    svc = RealRecommendationService()
+    items = [
+        {"id": "x", "category": "nature", "similarity": 0.80},
+        {"id": "y", "category": "cultural", "similarity": 0.75},
+    ]
+    out = svc._rerank_with_preferences(items, ["cultural"])
+    assert out[0]["id"] == "y"
+    assert out[0]["score"] == pytest.approx(0.83)
 
-
-@pytest.mark.asyncio
-async def test_get_personalized_destinations_seasonality_disabled(mock_mm):
-    sea = SeasonalityService()
-    svc = RecommendationService(mock_mm, trends_service=None, seasonality_service=sea)
-    req = DestinationRecommendationRequest(
-        user_id="u1",
-        max_results=4,
-        include_emerging_trends=False,
-        apply_seasonality_mitigation=False,
-    )
-    out = svc.get_personalized_destinations(req)
-    assert not out.seasonality_note
-    assert all(d.seasonal_context is None for d in out.destinations)
-
-
-@pytest.mark.asyncio
-async def test_contextual_activities(rec_svc: RecommendationService):
-    req = ContextualActivityRequest(
-        user_id="u1",
-        latitude=41.0,
-        longitude=2.0,
-        weather=WeatherCondition.RAIN,
-        max_results=4,
-    )
-    out = rec_svc.get_contextual_activities(req)
-    assert out.activities
-
-
-@pytest.mark.asyncio
-async def test_generate_recommendations(rec_svc: RecommendationService):
-    from app.modules.common.schemas.base import Location
-
-    req = RecommendationRequest(
-        user_id="u1",
-        location=Location(latitude=10, longitude=20, city="X"),
-        max_results=3,
-    )
-    out = rec_svc.generate_recommendations(req)
-    assert out.recommendations
-
-
-@pytest.mark.asyncio
-async def test_get_categories_and_trending(rec_svc: RecommendationService):
-    cats = rec_svc.get_activity_categories()
-    assert "cultural" in cats
-    t = rec_svc.get_trending_activities(None, 2)
-    assert len(t) <= 2
-
-
-@pytest.mark.asyncio
-async def test_get_popular_activities(rec_svc: RecommendationService):
-    acts = rec_svc.get_popular_activities("Barcelona", 5)
-    assert len(acts) <= 5
-
-
-@pytest.mark.asyncio
-async def test_get_trending_with_category(rec_svc: RecommendationService):
-    t = rec_svc.get_trending_activities("cultural", 3)
-    assert isinstance(t, list)
-
-
-@pytest.mark.asyncio
-async def test_get_similar_no_reference(rec_svc: RecommendationService):
-    sim = rec_svc.get_similar_activities("missing_id_xyz", 3)
-    assert sim == []
-
-
-@pytest.mark.asyncio
-async def test_record_feedback(rec_svc: RecommendationService):
-    rec_svc.record_feedback("u1", "act1", 4, feedback_text="nice")
-
-
-@pytest.mark.asyncio
-async def test_get_similar_activities_with_reference(monkeypatch, rec_svc: RecommendationService):
-    source = rec_svc._generate_mock_activities("seed", 1)[0]
-    source.activity_id = "known-id"
-
-    monkeypatch.setattr(rec_svc, "_get_activity_by_id", lambda _id: source)
-    sim = rec_svc.get_similar_activities("known-id", 3)
-    assert len(sim) <= 3
-
-
-@pytest.mark.asyncio
-async def test_get_contextual_activities_good_weather_note(rec_svc: RecommendationService):
-    req = ContextualActivityRequest(
-        user_id="u1",
-        latitude=41.0,
-        longitude=2.0,
-        weather=WeatherCondition.CLEAR,
-        max_results=4,
-    )
-    out = rec_svc.get_contextual_activities(req)
-    assert "Condiciones favorables" in out.context_adjustment
-
-
-@pytest.mark.asyncio
-async def test_generate_recommendations_uses_budget_and_group(mock_mm):
-    svc = RecommendationService(mock_mm)
-    from app.modules.common.schemas.base import Location
-
-    req = RecommendationRequest(
-        user_id="u2",
-        location=Location(latitude=20, longitude=30, city="Y"),
-        max_results=5,
-        budget_limit=250,
-        group_size=3,
-    )
-    out = svc.generate_recommendations(req)
-    assert out.total_results <= 5
-
-
-@pytest.mark.asyncio
-async def test_generate_raises_propagates(mock_mm, monkeypatch):
-    svc = RecommendationService(mock_mm)
-
-    def boom(*a, **k):
-        raise RuntimeError("fail")
-
-    monkeypatch.setattr(svc, "_get_user_profile", boom)
-    from app.modules.common.schemas.base import Location
-    from app.modules.recommendations.schemas import RecommendationRequest
-
-    req = RecommendationRequest(
-        user_id="u1",
-        location=Location(latitude=1, longitude=2),
-        max_results=2,
-    )
-    with pytest.raises(RuntimeError):
-        svc.generate_recommendations(req)

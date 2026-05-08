@@ -16,10 +16,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
+from sqlalchemy import select
+
 from app.core.config import settings
+from app.db import database as db_database
+from app.db.runtime_models import TrendSegmentRecord, TrendSignalRecord
 from app.modules.trends.schemas import (
     EmergingDestinationTrend,
     MicroTrendOpportunity,
@@ -33,70 +38,8 @@ from app.modules.trends.schemas import (
 
 logger = logging.getLogger(__name__)
 
-# Synthetic aggregated “search” volumes: current vs previous 30-day windows.
-# Surge ratio = (current - previous) / previous (PBI 30: mark emerging when >= 50%).
-_SIGNAL_SEED: List[Dict[str, Any]] = [
-    {
-        "destination_id": "dst_azores",
-        "name": "Azores",
-        "country": "Portugal",
-        "tags": ["nature", "adventure", "relaxation"],
-        "previous": 4200,
-        "current": 7800,
-    },
-    {
-        "destination_id": "dst_georgia",
-        "name": "Georgia (Caucasus)",
-        "country": "Georgia",
-        "tags": ["cultural", "foodie", "adventure"],
-        "previous": 3100,
-        "current": 6200,
-    },
-    {
-        "destination_id": "dst_slovenia",
-        "name": "Slovenia",
-        "country": "Slovenia",
-        "tags": ["nature", "cultural", "foodie"],
-        "previous": 5100,
-        "current": 6900,
-    },
-    {
-        "destination_id": "dst_lisbon",
-        "name": "Lisbon",
-        "country": "Portugal",
-        "tags": ["cultural", "foodie", "beach"],
-        "previous": 88000,
-        "current": 90000,
-    },
-]
-
-_SEGMENT_LIBRARY: Dict[str, Dict[str, Any]] = {
-    "family_budget": {
-        "label": "Familias presupuesto medio",
-        "seasonal": [
-            {"label": "Picos escolares (Jul–Aug)", "intensity": 0.82, "months_peak": [7, 8]},
-            {"label": "Semana santa / puentes", "intensity": 0.64, "months_peak": [3, 4, 12]},
-        ],
-        "budget": {"median_daily_usd": 120, "elasticity": "high"},
-        "preferences": ["beach", "cultural", "relaxation"],
-    },
-    "solo_luxury": {
-        "label": "Solo traveler premium",
-        "seasonal": [
-            {"label": "Shoulder season premium", "intensity": 0.71, "months_peak": [5, 6, 9, 10]},
-        ],
-        "budget": {"median_daily_usd": 380, "elasticity": "low"},
-        "preferences": ["foodie", "cultural", "nature"],
-    },
-    "eco_conscious": {
-        "label": "Turismo consciente / slow travel",
-        "seasonal": [
-            {"label": "Primavera / otoño outdoor", "intensity": 0.77, "months_peak": [4, 5, 9, 10]},
-        ],
-        "budget": {"median_daily_usd": 160, "elasticity": "medium"},
-        "preferences": ["nature", "adventure", "cultural"],
-    },
-}
+_SIGNAL_SEED: List[Dict[str, Any]] = []
+_SEGMENT_LIBRARY: Dict[str, Dict[str, Any]] = {}
 
 
 class TrendsService:
@@ -108,22 +51,91 @@ class TrendsService:
     """
 
     def __init__(self) -> None:
+        db_database.init_db_engine()
         self._last_refresh: Optional[datetime] = None
         self._emerging: List[EmergingDestinationTrend] = []
+        self._signal_rows: List[Dict[str, Any]] = []
+        self._segment_library: Dict[str, Dict[str, Any]] = {}
+        self._load_ingested_state()
+
+    @staticmethod
+    def _db():
+        assert db_database.SessionLocal is not None
+        return db_database.SessionLocal()
+
+    def _load_ingested_state(self) -> None:
+        with self._db() as db:
+            signal_rows = db.scalars(select(TrendSignalRecord)).all()
+            segment_rows = db.scalars(select(TrendSegmentRecord)).all()
+        self._signal_rows = [
+            {
+                "destination_id": r.destination_id,
+                "name": r.name,
+                "country": r.country,
+                "tags": json.loads(r.tags_json or "[]"),
+                "previous": r.previous,
+                "current": r.current,
+            }
+            for r in signal_rows
+        ]
+        self._segment_library = {
+            r.segment_id: json.loads(r.payload_json or "{}")
+            for r in segment_rows
+        }
+
+    def ingest_signal_rows(self, rows: List[Dict[str, Any]]) -> None:
+        """Upsert/replace trend signal rows from external data ingestion."""
+        self._signal_rows = [dict(r) for r in rows]
+        with self._db() as db:
+            for old in db.scalars(select(TrendSignalRecord)).all():
+                db.delete(old)
+            for row in self._signal_rows:
+                db.add(
+                    TrendSignalRecord(
+                        destination_id=row["destination_id"],
+                        name=row["name"],
+                        country=row["country"],
+                        tags_json=json.dumps(row.get("tags", [])),
+                        previous=int(row["previous"]),
+                        current=int(row["current"]),
+                        updated_at=datetime.now(timezone.utc),
+                    )
+                )
+            db.commit()
+        logger.info("Trends ingested rows: %s", len(self._signal_rows))
+
+    def ingest_segment_library(self, library: Dict[str, Dict[str, Any]]) -> None:
+        """Upsert/replace segment insights source from external ingestion."""
+        self._segment_library = dict(library)
+        with self._db() as db:
+            for old in db.scalars(select(TrendSegmentRecord)).all():
+                db.delete(old)
+            for sid, payload in self._segment_library.items():
+                db.add(
+                    TrendSegmentRecord(
+                        segment_id=sid,
+                        payload_json=json.dumps(payload),
+                        updated_at=datetime.now(timezone.utc),
+                    )
+                )
+            db.commit()
+        logger.info("Trends ingested segment profiles: %s", len(self._segment_library))
 
     async def ensure_initialized(self) -> None:
         """Ensures materialized data by calling ``refresh`` if the list is empty."""
+        if not self._signal_rows:
+            raise RuntimeError("No trends signal rows ingested. POST /api/v1/trends/ingest/signals first.")
         if not self._emerging:
             await self.refresh()
 
     async def refresh(self) -> None:
-        """Recomputes emerging flags from mock seed and configuration thresholds."""
+        """Recomputes emerging flags from ingested signal rows and configuration thresholds."""
         await asyncio.sleep(0)
         window = settings.TREND_ANALYSIS_WINDOW_DAYS
         threshold = settings.TREND_EMERGENCE_SURGE_RATIO
         emerging: List[EmergingDestinationTrend] = []
 
-        for row in _SIGNAL_SEED:
+        for row in self._signal_rows:
             prev_v = int(row["previous"])
             cur_v = int(row["current"])
             if prev_v <= 0:
@@ -215,12 +227,13 @@ class TrendsService:
             segment_id: Key in the internal library; falls back to ``family_budget``.
 
         Returns:
-            Response with seasonal patterns and mock budget profile.
+            Response with seasonal patterns and budget profile from ingested segment data.
         """
-        data = _SEGMENT_LIBRARY.get(segment_id)
+        data = self._segment_library.get(segment_id)
         if not data:
-            data = _SEGMENT_LIBRARY["family_budget"]
-            segment_id = "family_budget"
+            raise RuntimeError(
+                f"Segment '{segment_id}' not found. Ingest segment library before requesting insights."
+            )
 
         seasonal = [
             SeasonalPattern(

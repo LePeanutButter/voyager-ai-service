@@ -18,12 +18,26 @@ from app.api.deps import MatchingServiceDep
 from app.modules.matching.schemas import (
     ConnectionOutcomeRequest,
     ConnectionOutcomeResponse,
+    MatchingProfilesIngestRequest,
     MatchingResponse,
     TravelerMatchRequest,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+@router.post(
+    "/profiles/ingest",
+    responses={500: {"description": "Failed to ingest matching profiles"}},
+)
+async def ingest_matching_profiles(body: MatchingProfilesIngestRequest, service: MatchingServiceDep):
+    try:
+        count = await _resolve(service.ingest_profiles([p.model_dump() for p in body.profiles]))
+        return {"message": "Matching profiles ingested", "profiles": count}
+    except Exception as e:
+        logger.error("Error ingesting matching profiles: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to ingest matching profiles")
 
 
 async def _resolve(value):

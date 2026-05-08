@@ -2,6 +2,8 @@
 
 import pytest
 
+from app.db import database as db_database
+from app.db.runtime_models import UserInteractionRecord, UserProfileRecord
 from app.modules.common.schemas.base import Location
 from app.modules.common.schemas.enums import TravelPreference
 from app.modules.users.schemas import (
@@ -19,6 +21,12 @@ class _FakeMM:
 
 @pytest.fixture
 def svc():
+    db_database.init_db_engine()
+    assert db_database.SessionLocal is not None
+    with db_database.SessionLocal() as db:
+        db.query(UserInteractionRecord).delete()
+        db.query(UserProfileRecord).delete()
+        db.commit()
     return UserService(_FakeMM())
 
 

@@ -1,882 +1,166 @@
 {
   "info": {
     "_postman_id": "aa2ecae5-2456-4e72-a55c-0aa374a6071d",
-    "name": "Voyager AI Service — API completa (local)",
-    "description": "## Voyager AI Service (FastAPI) — suite Postman local\n\n### Requisitos\n1. Microservicio en ejecución (por defecto `http://localhost:8000`).\n2. Prefijo API: **`/api/v1`** → variable `baseUrl` = `{{rootUrl}}/api/v1`.\n3. Importar **colección** + entorno **`Voyager-AI-Service.local`** y seleccionarlo.\n\n### Flujo sugerido\n1. **00 — Salud**: raíz, `/health`, OpenAPI.\n2. **02 — Usuarios**: crear perfil antes de flujos que lo requieran.\n3. **05 — Estacionalidad**: `/seasonality/*` (índices s=12, forecast naive, visibilidad).\n4. **07 — Cuestionario**: el primer **step** guarda `questionnaireSessionId` en el entorno.\n5. **Matching**: perfiles mock internos incluyen `user1`, `user2`, `user3`.\n\nEn **01 — Recommendations → Destinos personalizados** puedes usar `travel_month` (1–12) y `apply_seasonality_mitigation` para ver `seasonal_context` en las tarjetas.\n\n### Notas\n- Sin autenticación JWT (a diferencia de voyager-backend-core).\n- Esquemas Pydantic: cuerpos en **snake_case** salvo **chat** (`userId`, `message`).\n- Variables útiles: `seasonalityDestinationId` (p. ej. `dst_lisbon`), `seasonalityTravelMonth` (1–12).\n",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "version": "1.0.0"
+    "name": "Voyager AI Service — Data-Driven Local",
+    "description": "Coleccion alineada al flujo actual data-driven. No incluye endpoints legacy `/api/v1/recommendations/*`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    {
-      "key": "rootUrl",
-      "value": "http://localhost:8000"
-    },
-    {
-      "key": "baseUrl",
-      "value": "http://localhost:8000/api/v1"
-    },
-    {
-      "key": "matchingUserId",
-      "value": "user1"
-    },
-    {
-      "key": "matchingTargetUserId",
-      "value": "user2"
-    },
-    {
-      "key": "chatUserId",
-      "value": "postman-chat-user"
-    },
-    {
-      "key": "questionnaireSessionId",
-      "value": ""
-    },
-    {
-      "key": "seasonalityDestinationId",
-      "value": "dst_lisbon"
-    },
-    {
-      "key": "seasonalityTravelMonth",
-      "value": "7"
-    }
+    { "key": "rootUrl", "value": "http://localhost:8000" },
+    { "key": "baseUrl", "value": "http://localhost:8000/api/v1" },
+    { "key": "localUserId", "value": "user1" },
+    { "key": "localSessionId", "value": "postman-local-session-1" },
+    { "key": "localActivityId", "value": "ai-item-002" },
+    { "key": "questionnaireSessionId", "value": "" }
   ],
   "item": [
     {
-      "name": "00 — Salud y documentación",
-      "description": "Endpoints en la raíz de la app (sin `/api/v1`).",
+      "name": "00 — Salud",
+      "item": [
+        { "name": "Root", "request": { "method": "GET", "url": "{{rootUrl}}/" } },
+        { "name": "Health", "request": { "method": "GET", "url": "{{rootUrl}}/health" } },
+        { "name": "OpenAPI", "request": { "method": "GET", "url": "{{rootUrl}}/openapi.json" } }
+      ]
+    },
+    {
+      "name": "01 — Ingesta Base (obligatorio)",
       "item": [
         {
-          "name": "Root",
+          "name": "Trends ingest signals",
           "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{rootUrl}}/",
-            "description": "Mensaje de bienvenida y estado."
-          },
-          "response": []
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/trends/ingest/signals",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rows\": [\n    {\n      \"destination_id\": \"dst_barcelona\",\n      \"name\": \"Barcelona\",\n      \"country\": \"Spain\",\n      \"tags\": [\"cultural\", \"foodie\"],\n      \"previous\": 90,\n      \"current\": 120\n    }\n  ]\n}"
+            }
+          }
         },
         {
-          "name": "Health",
+          "name": "Trends ingest segments",
           "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{rootUrl}}/health",
-            "description": "Incluye `models_loaded` tras el lifespan."
-          },
-          "response": []
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/trends/ingest/segments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"segments\": {\n    \"family_budget\": {\n      \"label\": \"Family Budget\",\n      \"seasonal\": [{\"label\": \"verano\", \"intensity\": 0.8, \"months_peak\": [7, 8]}],\n      \"budget\": {\"avg_daily_budget\": 90, \"currency\": \"EUR\"},\n      \"preferences\": [\"family\", \"budget\"]\n    }\n  }\n}"
+            }
+          }
         },
         {
-          "name": "OpenAPI JSON",
+          "name": "Seasonality ingest profiles",
           "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{rootUrl}}/openapi.json",
-            "description": "Esquema OpenAPI 3 generado por FastAPI."
-          },
-          "response": []
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/seasonality/ingest/profiles",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rows\": [\n    {\n      \"destination_id\": \"dst_barcelona\",\n      \"name\": \"Barcelona\",\n      \"country\": \"Spain\",\n      \"monthly_indices\": [0.8,0.8,0.9,1.0,1.1,1.2,1.3,1.3,1.2,1.0,0.9,0.8]\n    },\n    {\n      \"destination_id\": \"dst_lisbon\",\n      \"name\": \"Lisbon\",\n      \"country\": \"Portugal\",\n      \"monthly_indices\": [0.7,0.8,0.9,1.0,1.0,1.1,1.2,1.2,1.1,1.0,0.9,0.8]\n    }\n  ]\n}"
+            }
+          }
         },
         {
-          "name": "Swagger UI",
+          "name": "Matching ingest profiles",
           "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{rootUrl}}/docs",
-            "description": "Documentación interactiva."
-          },
-          "response": []
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/matching/profiles/ingest",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"profiles\": [\n    {\"user_id\": \"user1\", \"name\": \"Ana\", \"location\": \"Barcelona\", \"preferences\": [\"cultural\"]},\n    {\"user_id\": \"user2\", \"name\": \"Luis\", \"location\": \"Barcelona\", \"preferences\": [\"cultural\", \"foodie\"]}\n  ]\n}"
+            }
+          }
         }
       ]
     },
     {
-      "name": "01 — Recommendations",
+      "name": "02 — Trends",
       "item": [
-        {
-          "name": "Destinos personalizados",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/recommendations/destinations/personalized",
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"user_id\": \"postman-user\",\n  \"max_results\": 6,\n  \"prefer_successful_patterns\": true,\n  \"include_emerging_trends\": false,\n  \"travel_month\": {{seasonalityTravelMonth}},\n  \"apply_seasonality_mitigation\": true\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Actividades contextuales",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/recommendations/activities/contextual",
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"user_id\": \"postman-user\",\n  \"latitude\": 41.39,\n  \"longitude\": 2.15,\n  \"city_hint\": \"Barcelona\",\n  \"weather\": \"rain\",\n  \"max_results\": 5,\n  \"radius_km\": 25.0\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Recomendaciones personalizadas (ML)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/recommendations/personalized",
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"user_id\": \"postman-user\",\n  \"location\": {\n    \"latitude\": 41.39,\n    \"longitude\": 2.15,\n    \"city\": \"Barcelona\",\n    \"country\": \"Spain\",\n    \"radius_km\": 25.0\n  },\n  \"max_results\": 5\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Populares por ubicación",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/recommendations/popular/Barcelona?limit=8",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Tendencias",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/recommendations/trending?limit=10",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Similares a actividad",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/recommendations/similar/act_demo_1?limit=5",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Feedback",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": "{{baseUrl}}/recommendations/feedback?user_id=postman-user&activity_id=act1&rating=4",
-            "description": "Opcional: añadir `feedback_text` como query param."
-          },
-          "response": []
-        },
-        {
-          "name": "Categorías de actividades",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/recommendations/categories",
-            "description": ""
-          },
-          "response": []
-        }
+        { "name": "Dashboard", "request": { "method": "GET", "url": "{{baseUrl}}/trends/dashboard" } },
+        { "name": "Segment insights", "request": { "method": "GET", "url": "{{baseUrl}}/trends/segments/family_budget/insights" } },
+        { "name": "Weekly digest", "request": { "method": "GET", "url": "{{baseUrl}}/trends/digest/weekly" } }
       ]
     },
     {
-      "name": "02 — Users",
+      "name": "03 — Seasonality",
       "item": [
-        {
-          "name": "Crear perfil",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/users/profile",
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"user_id\": \"postman-profile-1\",\n  \"name\": \"Postman User\",\n  \"email\": \"postman.user@example.com\",\n  \"age\": 30,\n  \"preferences\": {\n    \"preferences\": [\n      \"cultural\",\n      \"foodie\"\n    ],\n    \"budget_range\": {\n      \"min\": 50,\n      \"max\": 500\n    },\n    \"travel_style\": \"mid-range\",\n    \"group_size\": 2,\n    \"accessibility_needs\": [],\n    \"dietary_restrictions\": [],\n    \"language_preferences\": [\n      \"Spanish\",\n      \"English\"\n    ]\n  },\n  \"travel_history\": []\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Obtener perfil",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/users/profile/postman-profile-1",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Actualizar perfil",
-          "request": {
-            "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/users/profile/postman-profile-1",
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"location\": \"Madrid\",\n  \"travel_history\": []\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Actualizar preferencias",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/users/preferences/postman-profile-1",
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"preferences\": [\n    \"adventure\",\n    \"nature\"\n  ],\n  \"budget_range\": {\n    \"min\": 100,\n    \"max\": 800\n  },\n  \"travel_style\": \"mid-range\",\n  \"group_size\": 2,\n  \"accessibility_needs\": [],\n  \"dietary_restrictions\": [],\n  \"language_preferences\": [\n    \"English\"\n  ]\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Registrar interacción",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/users/interaction",
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"user_id\": \"postman-profile-1\",\n  \"activity_id\": \"activity-001\",\n  \"interaction_type\": \"view\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Historial de interacciones",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/users/history/postman-profile-1?limit=20",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Insights",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/users/insights/postman-profile-1",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Eliminar perfil",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": "{{baseUrl}}/users/profile/postman-profile-1",
-            "description": ""
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "03 — Matching",
-      "item": [
-        {
-          "name": "Buscar compañeros de viaje",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/matching/find",
-            "description": "Usa perfiles mock `user1`–`user3` del servicio.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"user_id\": \"{{matchingUserId}}\",\n  \"location\": {\n    \"latitude\": 41.39,\n    \"longitude\": 2.15,\n    \"city\": \"Barcelona\",\n    \"country\": \"Spain\",\n    \"radius_km\": 50.0\n  },\n  \"preferences\": [\n    \"cultural\",\n    \"foodie\"\n  ],\n  \"max_matches\": 5\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Compatibilidad",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/matching/compatibility/{{matchingUserId}}/{{matchingTargetUserId}}",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Iniciar conexión",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": "{{baseUrl}}/matching/connect/{{matchingUserId}}/{{matchingTargetUserId}}?message=Hola",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Listar conexiones",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/matching/connections/{{matchingUserId}}?status=pending",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Responder conexión",
-          "request": {
-            "method": "PUT",
-            "header": [],
-            "url": "{{baseUrl}}/matching/connections/{{connection_id}}/respond?response=accept",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Recomendaciones travel buddy",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/matching/recommendations/{{matchingUserId}}?limit=5",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Learning — resultado conexión",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/matching/learning/connection-outcome",
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"user_id\": \"{{matchingUserId}}\",\n  \"target_user_id\": \"{{matchingTargetUserId}}\",\n  \"outcome\": \"success\",\n  \"dimension_snapshot\": {\n    \"interests\": 0.8,\n    \"travel_style\": 0.6\n  },\n  \"notes\": \"postman test\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Feedback de match",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": "{{baseUrl}}/matching/feedback/{{matchingUserId}}/{{matchingTargetUserId}}?rating=4",
-            "description": ""
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "04 — Trends",
-      "item": [
-        {
-          "name": "Dashboard",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/trends/dashboard",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Insights de segmento",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/trends/segments/family_budget/insights",
-            "description": "Otros `segment_id` desconocidos caen en fallback `family_budget`."
-          },
-          "response": []
-        },
-        {
-          "name": "Weekly digest",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/trends/weekly-digest",
-            "description": ""
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "05 — Seasonality (estacionalidad)",
-      "description": "Índices mensuales s=12, perfil por destino, pronóstico ingenuo estacional y ajustes de visibilidad (PEAS / mitigación). Prefijo `/seasonality`. Variables: `seasonalityDestinationId`, `seasonalityTravelMonth`.",
-      "item": [
-        {
-          "name": "Overview",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/seasonality/overview",
-            "description": "Sin query: el backend usa el mes calendario actual (UTC) como `reference_month` en la respuesta. Opcional en otro request: `reference_month` 1–12."
-          },
-          "response": []
-        },
-        {
-          "name": "Overview (mes de referencia)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/seasonality/overview?reference_month={{seasonalityTravelMonth}}",
-            "description": "Fija el mes de referencia con la variable `seasonalityTravelMonth`."
-          },
-          "response": []
-        },
-        {
-          "name": "Perfil de un destino",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/seasonality/destinations/{{seasonalityDestinationId}}",
-            "description": "404 si el id no está en el catálogo interno de estacionalidad."
-          },
-          "response": []
-        },
-        {
-          "name": "Forecast (seasonal naive)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/seasonality/forecast",
-            "description": "Pronóstico placeholder hasta SARIMA con series reales.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"destination_id\": \"{{seasonalityDestinationId}}\",\n  \"start_month\": 1,\n  \"horizon_months\": 6\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
+        { "name": "Overview", "request": { "method": "GET", "url": "{{baseUrl}}/seasonality/overview?reference_month=7" } },
+        { "name": "Destination profile", "request": { "method": "GET", "url": "{{baseUrl}}/seasonality/destinations/dst_lisbon" } },
         {
           "name": "Visibility adjustments",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
             "url": "{{baseUrl}}/seasonality/visibility-adjustments",
-            "description": "Factores de visibilidad por destino y `travel_month`; con `apply_mitigation`: false el multiplicador queda en 1.0.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"destination_ids\": [\"{{seasonalityDestinationId}}\", \"dst_barcelona\"],\n  \"travel_month\": {{seasonalityTravelMonth}},\n  \"apply_mitigation\": true\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
+            "body": { "mode": "raw", "raw": "{\n  \"destination_ids\": [\"dst_barcelona\", \"dst_lisbon\"],\n  \"travel_month\": 7,\n  \"apply_mitigation\": true\n}" }
+          }
         }
       ]
     },
     {
-      "name": "06 — Chat",
+      "name": "04 — Users y Matching",
       "item": [
         {
-          "name": "Enviar mensaje",
+          "name": "Create profile",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/chat",
-            "description": "Contrato: `userId` y `message` en camelCase.",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/users/profile",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"userId\": \"{{chatUserId}}\",\n  \"message\": \"Hola, quiero planear un viaje a Roma con presupuesto moderado.\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
+              "raw": "{\n  \"user_id\": \"user1\",\n  \"name\": \"Ana\",\n  \"email\": \"ana@example.com\",\n  \"preferences\": {\n    \"preferences\": [\"cultural\"],\n    \"budget_range\": {\"min\": 50, \"max\": 250},\n    \"travel_style\": \"mid-range\",\n    \"group_size\": 2,\n    \"accessibility_needs\": [],\n    \"dietary_restrictions\": [],\n    \"language_preferences\": [\"Spanish\"]\n  },\n  \"travel_history\": []\n}"
             }
-          },
-          "response": []
+          }
         },
         {
-          "name": "Historial",
+          "name": "Find matching",
           "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/chat/{{chatUserId}}/history",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Borrar historial",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": "{{baseUrl}}/chat/{{chatUserId}}/history",
-            "description": ""
-          },
-          "response": []
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/matching/find",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"user1\",\n  \"location\": {\"latitude\": 41.39, \"longitude\": 2.15, \"city\": \"Barcelona\", \"country\": \"Spain\", \"radius_km\": 25},\n  \"preferences\": [\"cultural\"],\n  \"max_matches\": 5\n}"
+            }
+          }
         }
       ]
     },
     {
-      "name": "07 — Travel preferences (cuestionario)",
+      "name": "10 — Local AI + Recomendaciones",
       "item": [
         {
-          "name": "Step 1 — nueva sesión",
+          "name": "Chat local",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/travel-preferences/questionnaire/step",
-            "description": "",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/local/chat/message",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"user_id\": \"postman-prefs\",\n  \"answers\": []\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
+              "raw": "{\n  \"user_id\": \"{{localUserId}}\",\n  \"session_id\": \"{{localSessionId}}\",\n  \"message\": \"Hola, recomiendame algo cultural\"\n}"
             }
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "try {",
-                  "  const j = pm.response.json();",
-                  "  if (pm.response.code === 200 && j.session_id) {",
-                  "    pm.environment.set('questionnaireSessionId', j.session_id);",
-                  "    pm.collectionVariables.set('questionnaireSessionId', j.session_id);",
-                  "  }",
-                  "} catch (e) {}"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ]
+          }
         },
         {
-          "name": "Step 2 — estilo principal",
+          "name": "Local recommendations",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/travel-preferences/questionnaire/step",
-            "description": "Ejecutar después del step 1 (session_id en entorno).",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/local/recommendations",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"user_id\": \"postman-prefs\",\n  \"session_id\": \"{{questionnaireSessionId}}\",\n  \"answers\": [\n    {\n      \"question_id\": \"primary_travel_style\",\n      \"selected_option_ids\": [\n        \"cultural\"\n      ]\n    }\n  ]\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
+              "raw": "{\n  \"user_id\": \"{{localUserId}}\",\n  \"query\": \"actividades culturales en madrid\",\n  \"limit\": 5,\n  \"candidates\": [\n    {\"id\": \"ai-item-001\", \"name\": \"Museo del Prado\", \"category\": \"cultural\", \"price\": 18, \"content_text\": \"arte clasico\"},\n    {\"id\": \"ai-item-002\", \"name\": \"Parque del Retiro\", \"category\": \"nature\", \"price\": 0, \"content_text\": \"outdoor\"}\n  ]\n}"
             }
-          },
-          "response": []
+          }
         },
         {
-          "name": "Submit (requiere cuestionario completo)",
+          "name": "Recommendation feedback",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/travel-preferences/questionnaire/submit",
-            "description": "Solo tras completar todos los pasos del motor adaptativo.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"user_id\": \"postman-prefs\",\n  \"session_id\": \"{{questionnaireSessionId}}\",\n  \"answers\": []\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "08 — Behavior analysis",
-      "item": [
-        {
-          "name": "Track interacción",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/behavior-analysis/track",
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"user_id\": \"postman-behavior\",\n  \"interaction_type\": \"view\",\n  \"activity_id\": \"act-1\",\n  \"activity_category\": \"cultural\",\n  \"session_duration\": 12.5,\n  \"context\": {\n    \"source\": \"postman\"\n  }\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Analizar comportamiento",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/behavior-analysis/analyze",
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"user_id\": \"postman-behavior\",\n  \"analysis_period_days\": 7,\n  \"include_patterns\": true,\n  \"include_preference_updates\": true\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Resumen",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/behavior-analysis/summary/postman-behavior?days=30",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Batch track",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
-            "url": "{{baseUrl}}/behavior-analysis/batch-track",
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "[\n  {\n    \"user_id\": \"postman-behavior\",\n    \"interaction_type\": \"click\",\n    \"activity_id\": \"a1\"\n  },\n  {\n    \"user_id\": \"postman-behavior\",\n    \"interaction_type\": \"search\",\n    \"activity_id\": null\n  }\n]",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Patrones detectados",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/behavior-analysis/patterns/postman-behavior?days=7",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Limpiar datos",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": "{{baseUrl}}/behavior-analysis/clear/postman-behavior",
-            "description": ""
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "09 — Adaptive UI",
-      "item": [
-        {
-          "name": "Menú adaptativo",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/adaptive-ui/menu/postman-ui-user",
-            "description": ""
-          },
-          "response": []
-        },
-        {
-          "name": "Home feed",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/adaptive-ui/home-feed/postman-ui-user",
-            "description": ""
-          },
-          "response": []
+            "url": "{{baseUrl}}/local/recommendations/feedback?user_id={{localUserId}}&item_id={{localActivityId}}&rating=5"
+          }
         }
       ]
     }

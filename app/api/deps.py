@@ -20,7 +20,6 @@ from app.modules.behavior.service import BehaviorAnalysisService
 from app.modules.chat.service import ChatService
 from app.modules.matching.service import MatchingService
 from app.modules.preferences.service import PreferenceQuestionnaireService
-from app.modules.recommendations.service import RecommendationService
 from app.modules.seasonality.service import SeasonalityService
 from app.modules.trends.service import TrendsService
 from app.modules.users.service import UserService
@@ -45,27 +44,6 @@ def _require_model_manager(request: Request) -> ModelManager:
             detail="ML models not loaded",
         )
     return mm
-
-
-def get_recommendation_service(request: Request) -> RecommendationService:
-    """Resolves the recommendation service from app state.
-
-    Args:
-        request: Request with `app.state.recommendation_service`.
-
-    Returns:
-        `RecommendationService` configured at startup.
-
-    Raises:
-        HTTPException: 503 if the service is not on state.
-    """
-    svc = getattr(request.app.state, "recommendation_service", None)
-    if svc is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Recommendation service unavailable",
-        )
-    return svc
 
 
 def get_user_service(request: Request) -> UserService:
@@ -229,7 +207,6 @@ def get_preference_questionnaire_service(request: Request) -> PreferenceQuestion
 
 
 ModelManagerDep = Annotated[ModelManager, Depends(_require_model_manager)]
-RecommendationServiceDep = Annotated[RecommendationService, Depends(get_recommendation_service)]
 UserServiceDep = Annotated[UserService, Depends(get_user_service)]
 MatchingServiceDep = Annotated[MatchingService, Depends(get_matching_service)]
 SeasonalityServiceDep = Annotated[SeasonalityService, Depends(get_seasonality_service)]

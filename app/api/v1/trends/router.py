@@ -13,13 +13,42 @@ from fastapi import APIRouter, HTTPException
 
 from app.api.deps import TrendsServiceDep
 from app.modules.trends.schemas import (
+    TrendSegmentsIngestRequest,
     SegmentInsightsResponse,
+    TrendSignalIngestRequest,
     TrendsDashboardResponse,
     WeeklyTrendsDigestResponse,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+@router.post(
+    "/ingest/signals",
+    responses={500: {"description": "Failed to ingest trend signals"}},
+)
+async def ingest_trend_signals(body: TrendSignalIngestRequest, service: TrendsServiceDep):
+    try:
+        service.ingest_signal_rows([r.model_dump() for r in body.rows])
+        await service.refresh()
+        return {"message": "Trend signals ingested", "rows": len(body.rows)}
+    except Exception as e:
+        logger.error("Trend signal ingest failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to ingest trend signals")
+
+
+@router.post(
+    "/ingest/segments",
+    responses={500: {"description": "Failed to ingest trend segments"}},
+)
+async def ingest_trend_segments(body: TrendSegmentsIngestRequest, service: TrendsServiceDep):
+    try:
+        service.ingest_segment_library(body.segments)
+        return {"message": "Trend segments ingested", "segments": len(body.segments)}
+    except Exception as e:
+        logger.error("Trend segment ingest failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to ingest trend segments")
 
 
 @router.get(

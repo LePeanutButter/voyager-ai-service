@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     # RDS: usar "require" igual que JDBC ?sslmode=require en Spring.
     DB_SSLMODE: str = ""
 
+    # -----------------------------------------------------------------------
+    # AI local DB (memory + recommendation state)
+    # -----------------------------------------------------------------------
+    AI_SQLITE_PATH: str = "./data/ai_memory.db"
+    LOCAL_MODEL_NAME: str = "mistral:7b-instruct"
+    OLLAMA_URL: str = "http://127.0.0.1:11434"
+    LOCAL_EMBEDDING_MODEL: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
     # ML Model configuration
     MODEL_PATH: str = "./app/ml/models"
     RECOMMENDATION_MODEL: str = "recommendation_model.pkl"

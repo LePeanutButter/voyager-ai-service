@@ -27,6 +27,7 @@ For **cross-repo / AWS** context (ALB, RDS, Learner Lab–style deploy, relation
 ## Features
 
 - **Recommendations**: personalized destinations (with optional **seasonality** on rankings), contextual activities, popular / trending / similar, categories, feedback.
+- **Local AI stack (production-oriented)**: `/api/v1/local/*` runs with **Ollama local + embeddings locales + SQLite de memoria IA** para chat y recomendaciones basadas en `user_id`.
 - **Seasonality** (`/api/v1/seasonality`): monthly indices (s=12), per-destination profile, naive seasonal forecast, visibility adjustments for operators.
 - **Users, matching, trends**: profiles, compatibility, emerging trends digest.
 - **Chat**: LLM-backed or offline fallback (configurable).
@@ -49,9 +50,9 @@ Redis and external API keys are referenced in settings for future use; the app s
 ```bash
 git clone https://github.com/LePeanutButter/voyager-ai-service.git
 cd voyager-ai-service
-python -m venv venv
-# Windows: venv\Scripts\activate
-source venv/bin/activate
+python -m .venv .venv
+# Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -76,6 +77,8 @@ Common variables (see `app/core/config.py` for the full list):
 | `DB_HOST`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME`, `DB_PORT`, `DB_SSLMODE` | Build PostgreSQL URL for RDS-style deploys |
 | `MODEL_PATH`, `RECOMMENDATION_MODEL`, … | On-disk ML artifacts under `app/ml/models` |
 | `LLM_PROVIDER`, `LLM_API_KEY`, … | Chat / LLM integration |
+| `AI_SQLITE_PATH` | SQLite local exclusivo para memoria conversacional IA |
+| `OLLAMA_URL`, `LOCAL_MODEL_NAME`, `LOCAL_EMBEDDING_MODEL` | Inferencia y embeddings locales |
 | `ALLOWED_ORIGINS` | CORS allowlist; **comma-separated** string or list (e.g. `http://localhost:5173,http://10.0.0.5:5173`) |
 | `CORS_ALLOW_ORIGIN_REGEX` | Extra allowed origin pattern (no `*` wildcard) |
 | `CORS_ALLOW_EC2_COMPUTE_DNS` | `true` to allow browser origins matching **EC2 public DNS** (`ec2-…amazonaws.com`) only |
@@ -152,6 +155,7 @@ All versioned routes live under **`/api/v1`**. Authentication is not enforced he
 - **Travel preferences** `/api/v1/travel-preferences`
 - **Behavior** `/api/v1/behavior-analysis`
 - **Adaptive UI** `/api/v1/adaptive-ui`
+- **Local AI + real recommendations** `/api/v1/local`
 
 ### Example: personalized destinations with seasonality
 

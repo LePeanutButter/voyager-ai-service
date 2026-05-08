@@ -17,9 +17,13 @@ from __future__ import annotations
 import logging
 import asyncio
 import uuid
+import json
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from app.db import database as db_database
+from app.db.runtime_models import PreferenceSessionRecord
 from app.modules.preferences.engine import AdaptiveQuestionnaireEngine
 from app.modules.preferences.schemas import (
     AnswerItem,
@@ -54,8 +58,14 @@ class PreferenceQuestionnaireService:
     """
 
     def __init__(self) -> None:
+        db_database.init_db_engine()
         self._sessions: Dict[str, _Session] = {}
         self._engine = AdaptiveQuestionnaireEngine()
+
+    @staticmethod
+    def _db():
+        assert db_database.SessionLocal is not None
+        return db_database.SessionLocal()
 
     def _new_session(self, user_id: str) -> _Session:
         """Creates and registers a new session for the user.
@@ -69,12 +79,36 @@ class PreferenceQuestionnaireService:
         sid = str(uuid.uuid4())
         sess = _Session(session_id=sid, user_id=user_id)
         self._sessions[sid] = sess
+        with self._db() as db:
+            db.add(
+                PreferenceSessionRecord(
+                    session_id=sid,
+                    user_id=user_id,
+                    answers_json=json.dumps({}),
+                    step_index=0,
+                )
+            )
+            db.commit()
         logger.info("Created preference questionnaire session %s for user %s", sid, user_id)
         return sess
 
     def _get_session(self, session_id: str) -> Optional[_Session]:
         """Looks up a session by id, if still present."""
-        return self._sessions.get(session_id)
+        cached = self._sessions.get(session_id)
+        if cached:
+            return cached
+        with self._db() as db:
+            row = db.get(PreferenceSessionRecord, session_id)
+            if not row:
+                return None
+            sess = _Session(
+                session_id=row.session_id,
+                user_id=row.user_id,
+                answers={k: list(v) for k, v in json.loads(row.answers_json or "{}").items()},
+                step_index=row.step_index,
+            )
+            self._sessions[session_id] = sess
+            return sess
 
     @staticmethod
     def _first_answer(answers: Dict[str, List[str]], key: str) -> Optional[str]:
@@ -147,6 +181,13 @@ class PreferenceQuestionnaireService:
         step_before = sess.step_index
         if not complete:
             sess.step_index += 1
+        with self._db() as db:
+            row = db.get(PreferenceSessionRecord, sess.session_id)
+            if row:
+                row.answers_json = json.dumps(sess.answers)
+                row.step_index = sess.step_index
+                row.updated_at = datetime.now(timezone.utc)
+                db.commit()
 
         await asyncio.sleep(0)
         message = None
@@ -227,6 +268,13 @@ class PreferenceQuestionnaireService:
         profile.notes_for_ai = summary
 
         await asyncio.sleep(0)
+        with self._db() as db:
+            row = db.get(PreferenceSessionRecord, sess.session_id)
+            if row:
+                row.answers_json = json.dumps(sess.answers)
+                row.step_index = sess.step_index
+                row.updated_at = datetime.now(timezone.utc)
+                db.commit()
         logger.info(
             "Preference questionnaire submitted user=%s session=%s primary=%s",
             body.user_id,

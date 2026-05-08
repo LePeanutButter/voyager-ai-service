@@ -52,6 +52,15 @@ def check_db_connection() -> None:
         conn.execute(text("SELECT 1"))
 
 
+def init_runtime_tables() -> None:
+    """Create runtime persistence tables required by services."""
+    # Import registers ORM models on Base metadata.
+    from app.db import runtime_models  # noqa: F401
+
+    eng = get_engine()
+    Base.metadata.create_all(bind=eng)
+
+
 def get_db() -> Generator:
     """FastAPI dependency: yields a DB session (when SessionLocal is initialized)."""
     if SessionLocal is None:
