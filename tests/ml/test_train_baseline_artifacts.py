@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from app.core.config import settings
 from app.ml.model_loader import ModelManager
-from app.ml.training.train_baseline_artifacts import train_all
+from app.ml.training.train_baseline_artifacts import main, train_all
 
 
 @pytest.mark.asyncio
@@ -24,3 +26,11 @@ async def test_train_baseline_then_model_manager_loads(tmp_path, monkeypatch):
     assert m is not None
     out = await m.predict({"healthcheck": True})
     assert "compatibility_score" in out
+
+
+def test_train_baseline_main_writes_artifacts(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["train_baseline_artifacts", "--output", str(tmp_path)])
+    main()
+    assert (tmp_path / settings.RECOMMENDATION_MODEL).exists()
+    assert (tmp_path / settings.USER_PROFILING_MODEL).exists()
+    assert (tmp_path / settings.MATCHING_MODEL).exists()

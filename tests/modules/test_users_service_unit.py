@@ -119,6 +119,95 @@ async def test_generate_insights_missing_user(svc):
 
 
 @pytest.mark.asyncio
+async def test_update_preferences_missing_user_returns_false(svc):
+    assert svc.update_user_preferences("missing-user", UserPreferences()) is False
+
+
+@pytest.mark.asyncio
+async def test_analyze_preferences_budget_clamping(svc):
+    prefs = UserPreferences(budget_range={"min": -50, "max": -1})
+    out = svc._analyze_preferences(prefs)
+    assert out.budget_range["min"] == 0
+    assert out.budget_range["max"] >= out.budget_range["min"]
+
+
+@pytest.mark.asyncio
+async def test_record_interaction_appends_preference_from_metadata(svc):
+    prefs = UserPreferences(preferences=[TravelPreference.CULTURAL])
+    p = UserProfile(user_id="meta_pref_u", name="A", email="meta@b.c", preferences=prefs)
+    svc.create_user_profile(p)
+    svc.record_interaction(
+        UserInteraction(
+            user_id="meta_pref_u",
+            activity_id="act",
+            interaction_type="click",
+            metadata={"category": "foodie"},
+        )
+    )
+    profile = svc.get_user_profile("meta_pref_u")
+    assert profile is not None
+    pref_vals = [getattr(x, "value", x) for x in profile.preferences.preferences]
+    assert "foodie" in pref_vals
+
+
+@pytest.mark.asyncio
+async def test_generate_insights_categories_and_positive_types(svc):
+    prefs = UserPreferences()
+    p = UserProfile(user_id="ins_cat_u", name="A", email="ins_cat@b.c", preferences=prefs)
+    svc.create_user_profile(p)
+    svc.record_interaction(
+        UserInteraction(
+            user_id="ins_cat_u",
+            activity_id="a1",
+            interaction_type="view",
+            metadata={"category": "museums"},
+        )
+    )
+    svc.record_interaction(
+        UserInteraction(user_id="ins_cat_u", activity_id="a2", interaction_type="book")
+    )
+    insights = svc.generate_user_insights("ins_cat_u")
+    assert insights and insights["interaction_count"] >= 2
+    assert insights["top_categories"]
+
+
+@pytest.mark.asyncio
+async def test_delete_missing_profile_returns_false(svc):
+    assert svc.delete_user_profile("no_such_user_xyz") is False
+
+
+@pytest.mark.asyncio
+async def test_update_profile_preferences_location_and_history(svc):
+    prefs = UserPreferences(preferences=[TravelPreference.NATURE])
+    p = UserProfile(user_id="multi_u", name="A", email="multi@b.c", preferences=prefs)
+    svc.create_user_profile(p)
+    upd = UserProfileUpdate(
+        preferences=UserPreferences(preferences=[TravelPreference.BEACH]),
+        location="Valencia",
+        travel_history=[{"destination": "X"}],
+    )
+    out = svc.update_user_profile("multi_u", upd)
+    assert out is not None
+    assert out.location == "Valencia"
+    assert out.travel_history
+
+
+@pytest.mark.asyncio
+async def test_record_interaction_invalid_category_enum_ignored(svc):
+    prefs = UserPreferences(preferences=[TravelPreference.CULTURAL])
+    p = UserProfile(user_id="bad_cat_u", name="A", email="bad_cat@b.c", preferences=prefs)
+    svc.create_user_profile(p)
+    svc.record_interaction(
+        UserInteraction(
+            user_id="bad_cat_u",
+            activity_id="z",
+            interaction_type="click",
+            metadata={"category": "___not_an_enum___"},
+        )
+    )
+
+
+@pytest.mark.asyncio
 async def test_interaction_history_limit(svc):
     prefs = UserPreferences()
     p = UserProfile(user_id="lim_u", name="A", email="a@b.c", preferences=prefs)
@@ -128,3 +217,4 @@ async def test_interaction_history_limit(svc):
             UserInteraction(user_id="lim_u", activity_id=str(i), interaction_type="view")
         )
     assert len(svc.get_interaction_history("lim_u", 2)) == 2
+

@@ -38,6 +38,13 @@ def test_get_matching_service_missing():
     assert exc.value.status_code == 503
 
 
+def test_get_seasonality_service_missing():
+    req = _request_with_state()
+    with pytest.raises(HTTPException) as exc:
+        deps.get_seasonality_service(req)
+    assert exc.value.status_code == 503
+
+
 def test_get_trends_service_missing():
     req = _request_with_state()
     with pytest.raises(HTTPException) as exc:
