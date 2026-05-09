@@ -373,6 +373,10 @@ class MatchingService:
                     user_profile, 
                     user_data
                 )
+                common_preferences = self._get_common_preferences(
+                    user_profile.get('preferences', []),
+                    user_data.get('preferences', []),
+                )
                 
                 if compatibility >= settings.MIN_COMPATIBILITY_SCORE:
                     match = TravelerMatch(
@@ -380,7 +384,7 @@ class MatchingService:
                         name=user_data['name'],
                         age=user_data.get('age'),
                         compatibility_score=compatibility,
-                        common_preferences=user_data.get('common_preferences', []),
+                        common_preferences=common_preferences,
                         travel_style_match=compatibility,
                         bio=user_data.get('bio'),
                         profile_image=user_data.get('profile_image')

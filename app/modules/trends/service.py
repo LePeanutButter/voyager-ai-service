@@ -27,6 +27,7 @@ from app.db import database as db_database
 from app.db.runtime_models import TrendSegmentRecord, TrendSignalRecord
 from app.modules.trends.schemas import (
     EmergingDestinationTrend,
+    MicroTrendGeo,
     MicroTrendOpportunity,
     PartnerTrendNotification,
     SeasonalPattern,
@@ -270,6 +271,14 @@ class TrendsService:
                 affected_segments=["eco_conscious", "solo_luxury"],
                 opportunity_score=0.86,
                 suggested_action="Empaquetar rutas multi-ciudad con carbono explícito bajo.",
+                geo=MicroTrendGeo(
+                    destination_id="dst_zurich",
+                    name="Zurich",
+                    country="Switzerland",
+                    latitude=47.3769,
+                    longitude=8.5417,
+                    city_code="ZRH",
+                ),
             ),
             MicroTrendOpportunity(
                 trend_id="mt_local_cuisine_workshop",
@@ -277,6 +286,14 @@ class TrendsService:
                 affected_segments=["family_budget", "solo_luxury"],
                 opportunity_score=0.74,
                 suggested_action="Cruzar datos de destinos emergentes con chefs partners.",
+                geo=MicroTrendGeo(
+                    destination_id="dst_oaxaca",
+                    name="Oaxaca",
+                    country="Mexico",
+                    latitude=17.0732,
+                    longitude=-96.7266,
+                    city_code="OAX",
+                ),
             ),
         ]
 

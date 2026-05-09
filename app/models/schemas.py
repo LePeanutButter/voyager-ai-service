@@ -53,6 +53,7 @@ from app.modules.recommendations.schemas import (
 )
 from app.modules.trends.schemas import (
     EmergingDestinationTrend,
+    MicroTrendGeo,
     MicroTrendOpportunity,
     PartnerTrendNotification,
     SeasonalPattern,
@@ -93,6 +94,7 @@ __all__ = [
     "MatchingResponse",
     "MenuAdaptationResponse",
     "MenuNavItem",
+    "MicroTrendGeo",
     "MicroTrendOpportunity",
     "NavItemTier",
     "PartnerTrendNotification",

@@ -5,10 +5,30 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import List
 
-import torch
-from transformers import AutoModel, AutoTokenizer
-
 from app.core.config import settings
+
+
+@lru_cache(maxsize=1)
+def _torch_mod():
+    try:
+        import torch
+    except ModuleNotFoundError as e:
+        raise ModuleNotFoundError(
+            "Falta 'torch'. Instala dependencias ML: pip install -r requirements.txt "
+            "(o en CPU: pip install torch --index-url https://download.pytorch.org/whl/cpu)."
+        ) from e
+    return torch
+
+
+@lru_cache(maxsize=1)
+def _transformers_pairs():
+    try:
+        from transformers import AutoModel, AutoTokenizer
+    except ModuleNotFoundError as e:
+        raise ModuleNotFoundError(
+            "Falta 'transformers'. Instala: pip install -r requirements.txt"
+        ) from e
+    return AutoModel, AutoTokenizer
 
 
 class LocalEmbeddingService:
@@ -31,6 +51,7 @@ class LocalEmbeddingService:
             return_tensors="pt",
         )
 
+        torch = _torch_mod()
         with torch.no_grad():
             model_out = self.model(**encoded)
             token_embeddings = model_out.last_hidden_state
@@ -44,11 +65,13 @@ class LocalEmbeddingService:
 
 @lru_cache(maxsize=1)
 def _load_tokenizer(model_name: str):
+    _, AutoTokenizer = _transformers_pairs()
     return AutoTokenizer.from_pretrained(model_name, local_files_only=False)
 
 
 @lru_cache(maxsize=1)
 def _load_model(model_name: str):
+    AutoModel, _ = _transformers_pairs()
     model = AutoModel.from_pretrained(model_name, local_files_only=False)
     model.eval()
     return model

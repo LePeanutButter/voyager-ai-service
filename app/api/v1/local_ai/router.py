@@ -20,7 +20,15 @@ router = APIRouter()
     responses={500: {"description": "Error en chatbot local"}},
 )
 async def local_chat_message(req: LocalChatRequest, request: Request):
-    svc = request.app.state.local_chatbot_service
+    svc = getattr(request.app.state, "local_chatbot_service", None)
+    if svc is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Chatbot local no disponible: el servicio no se inicializó al arranque "
+                "(revisa logs del contenedor: Ollama, SQLite de memoria IA, o error inesperado en el constructor)."
+            ),
+        )
     try:
         out = await svc.chat(user_id=req.user_id, session_id=req.session_id, message=req.message)
         return LocalChatResponse(**out)
@@ -30,7 +38,15 @@ async def local_chat_message(req: LocalChatRequest, request: Request):
 
 @router.get("/chat/history/{session_id}")
 async def local_chat_history(session_id: str, request: Request, limit: int = 20):
-    svc = request.app.state.local_chatbot_service
+    svc = getattr(request.app.state, "local_chatbot_service", None)
+    if svc is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Chatbot local no disponible: el servicio no se inicializó al arranque "
+                "(revisa logs del contenedor IA)."
+            ),
+        )
     return {"session_id": session_id, "messages": svc.history(session_id=session_id, limit=limit)}
 
 

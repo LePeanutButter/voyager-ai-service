@@ -39,6 +39,9 @@ class BaseModel(ABC):
     def _load_pickle_artifact(self) -> Any:
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(f"Model artifact not found: {self.model_path}")
+        # Rutas de clase pickle → app.ml.picklable_wrappers (no app.main ni __main__)
+        import app.ml.picklable_wrappers  # noqa: F401
+
         with open(self.model_path, "rb") as f:
             return pickle.load(f)
 

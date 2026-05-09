@@ -50,4 +50,11 @@ async def test_weekly_digest(svc: TrendsService):
     await svc.refresh()
     out = svc.get_weekly_digest()
     assert out.generated_at is not None
+    assert len(out.micro_trends) >= 1
+    first = out.micro_trends[0]
+    assert first.geo is not None
+    assert first.geo.name
+    assert first.geo.country
+    assert first.geo.latitude is not None
+    assert first.geo.longitude is not None
 

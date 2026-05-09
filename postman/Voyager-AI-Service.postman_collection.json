@@ -80,7 +80,7 @@
       "item": [
         { "name": "Dashboard", "request": { "method": "GET", "url": "{{baseUrl}}/trends/dashboard" } },
         { "name": "Segment insights", "request": { "method": "GET", "url": "{{baseUrl}}/trends/segments/family_budget/insights" } },
-        { "name": "Weekly digest", "request": { "method": "GET", "url": "{{baseUrl}}/trends/digest/weekly" } }
+        { "name": "Weekly digest", "request": { "method": "GET", "url": "{{baseUrl}}/trends/weekly-digest" } }
       ]
     },
     {

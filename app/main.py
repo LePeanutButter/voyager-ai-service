@@ -20,7 +20,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_v1_router
-from app.ai.chatbot.service import LocalSpanishChatbotService
 from app.modules.chat.service import ChatService
 from app.core.config import settings
 from app.database.ai_sqlite import init_ai_sqlite
@@ -153,7 +152,18 @@ async def lifespan(app: FastAPI):
 
     _mark_startup_step(app, "init_services", "Initializing local AI services")
     app.state.real_recommendation_service = RealRecommendationService()
-    app.state.local_chatbot_service = LocalSpanishChatbotService()
+    try:
+        from app.ai.chatbot.service import LocalSpanishChatbotService
+
+        app.state.local_chatbot_service = LocalSpanishChatbotService()
+        logger.info("LocalSpanishChatbotService inicializado")
+    except Exception as chat_exc:  # ImportError/OSError DLL, modelos HF, etc.
+        app.state.local_chatbot_service = None
+        logger.warning(
+            "Chatbot local deshabilitado (%s); revisa Ollama, deps ML o logs del contenedor. "
+            "Rutas /api/v1/local/chat* responderán 503.",
+            chat_exc,
+        )
 
     preference_questionnaire_service = PreferenceQuestionnaireService()
     app.state.preference_questionnaire_service = preference_questionnaire_service
@@ -186,7 +196,7 @@ app = FastAPI(
 )
 
 _cors_kwargs = {
-    "allow_origins": settings.ALLOWED_ORIGINS,
+    "allow_origins": settings.allowed_origins_list,
     "allow_credentials": True,
     "allow_methods": ["*"],
     "allow_headers": ["*"],

@@ -219,6 +219,7 @@ Tests live under `tests/` (API, modules, prompts). Coverage thresholds may be en
 ## Deployment
 
 - **Docker**: use the included `Dockerfile`; expose port **8000** (e.g. behind an ALB target group for the AI tier).
+- **Docker Compose (EC2, no host Ollama)**: `docker-compose.yml` runs **Ollama** in one container and the **FastAPI** service in another; the app uses `OLLAMA_URL=http://ollama:11434` on the internal network. Named volumes persist Ollama weights, SQLite files, and ML `.pkl` artifacts. First run: set `OLLAMA_PULL_ON_START=1` in `.env` (slow) or run `docker compose exec ollama ollama pull <LOCAL_MODEL_NAME>`. Optional: uncomment published `11434` or GPU `deploy` in the YAML. Useful vars: `AI_HOST_PORT`, `ALLOWED_ORIGINS`, `CORS_ALLOW_EC2_COMPUTE_DNS`.
 - **EC2 / Learner Lab**: see `scripts/ec2-deploy-ai-service.sh` and `scripts/deploy-ai-service-manual.sh` for image + artifact transfer patterns aligned with **voyager-infrastructure**.
 
 Tune `ALLOWED_ORIGINS` / `CORS_*` on the instance to match how clients reach the web UI.
