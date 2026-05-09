@@ -22,6 +22,10 @@ _EC2_COMPUTE_PUBLIC_DNS_ORIGIN_REGEX = (
     r"^https?://ec2-(?:\d{1,3}-){3}\d{1,3}\.[a-z0-9.-]+\.amazonaws\.com(?::\d+)?$"
 )
 
+# Orígenes CORS por defecto solo para desarrollo local (frontends sin TLS).
+# En producción debe definirse ALLOWED_ORIGINS (p. ej. https://…) por variable de entorno.
+_DEFAULT_ALLOWED_ORIGINS_DEV = "http://localhost:3000,http://localhost:8080,http://localhost:5173"  # NOSONAR python:S5332 - HTTP en localhost para CORS en dev es intencional y acotado.
+
 
 class Settings(BaseSettings):
     """Application parameters loaded from environment variables and `.env`.
@@ -54,7 +58,7 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     # CORS: en variable de entorno usar CSV (pydantic-settings no aplica el validador antes de json.loads en List).
     ALLOWED_ORIGINS: str = Field(
-        default="http://localhost:3000,http://localhost:8080,http://localhost:5173",
+        default=_DEFAULT_ALLOWED_ORIGINS_DEV,
         description="Orígenes CORS separados por comas (misma variable ALLOWED_ORIGINS).",
     )
     # Regex adicional (sin usar *). Útil para patrones de laboratorio (p. ej. Vocareum).
@@ -176,7 +180,7 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             s = v.strip()
             if not s:
-                return "http://localhost:3000,http://localhost:8080,http://localhost:5173"
+                return _DEFAULT_ALLOWED_ORIGINS_DEV
             return s
         return v
 
