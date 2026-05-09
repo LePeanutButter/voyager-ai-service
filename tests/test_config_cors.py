@@ -9,7 +9,8 @@ from app.core.config import Settings
 
 def test_allowed_origins_csv_parsing():
     s = Settings(ALLOWED_ORIGINS="http://a:1,http://b:2")
-    assert s.ALLOWED_ORIGINS == ["http://a:1", "http://b:2"]
+    assert s.ALLOWED_ORIGINS == "http://a:1,http://b:2"
+    assert s.allowed_origins_list == ["http://a:1", "http://b:2"]
 
 
 def test_resolved_cors_regex_ec2_only():

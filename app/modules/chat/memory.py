@@ -18,10 +18,15 @@ Extensibility hook:
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
+from sqlalchemy import desc, select
+
+from app.db import database as db_database
+from app.db.runtime_models import ChatMessageRecord, ChatSessionRecord
 from app.modules.chat.schemas import ConversationMessage, TravelContext
 from app.core.config import settings
 
@@ -92,9 +97,15 @@ class ConversationMemory:
     """
 
     def __init__(self) -> None:
+        db_database.init_db_engine()
         self._sessions: Dict[str, UserSession] = {}
         self._global_lock: asyncio.Lock = asyncio.Lock()
         self._max_history: int = settings.CHAT_MAX_HISTORY
+
+    @staticmethod
+    def _db():
+        assert db_database.SessionLocal is not None
+        return db_database.SessionLocal()
 
     # ------------------------------------------------------------------
     # Session management
@@ -108,6 +119,17 @@ class ConversationMemory:
                 if user_id not in self._sessions:
                     logger.info("Creating new conversation session for user %s", user_id)
                     self._sessions[user_id] = UserSession(user_id, self._max_history)
+                    with self._db() as db:
+                        if db.get(ChatSessionRecord, user_id) is None:
+                            db.add(
+                                ChatSessionRecord(
+                                    user_id=user_id,
+                                    context_json=TravelContext().model_dump_json(),
+                                    created_at=datetime.now(timezone.utc),
+                                    updated_at=datetime.now(timezone.utc),
+                                )
+                            )
+                            db.commit()
         return self._sessions[user_id]
 
     # ------------------------------------------------------------------
@@ -118,6 +140,17 @@ class ConversationMemory:
         """Append a message to a user's session history."""
         session = await self._get_or_create_session(user_id)
         await session.add_message(message)
+        with self._db() as db:
+            db.add(
+                ChatMessageRecord(
+                    user_id=user_id,
+                    role=message.role,
+                    content=message.content,
+                    intent=message.intent.value if message.intent else None,
+                    timestamp=message.timestamp or datetime.now(timezone.utc),
+                )
+            )
+            db.commit()
         logger.debug(
             "Added %s message for user %s (total: %d)",
             message.role, user_id, session.message_count()
@@ -127,6 +160,12 @@ class ConversationMemory:
         """Merge a newly extracted partial context into the user's session."""
         session = await self._get_or_create_session(user_id)
         await session.update_context(partial_context)
+        with self._db() as db:
+            row = db.get(ChatSessionRecord, user_id)
+            if row:
+                row.context_json = session.get_context().model_dump_json()
+                row.updated_at = datetime.now(timezone.utc)
+                db.commit()
 
     def get_messages(self, user_id: str, last_n: Optional[int] = None) -> List[ConversationMessage]:
         """
@@ -141,7 +180,18 @@ class ConversationMemory:
         """
         session = self._sessions.get(user_id)
         if session is None:
-            return []
+            with self._db() as db:
+                rows = db.scalars(
+                    select(ChatMessageRecord)
+                    .where(ChatMessageRecord.user_id == user_id)
+                    .order_by(desc(ChatMessageRecord.timestamp), desc(ChatMessageRecord.id))
+                    .limit(last_n or self._max_history)
+                ).all()
+            rows = list(reversed(rows))
+            return [
+                ConversationMessage(role=r.role, content=r.content, timestamp=r.timestamp)
+                for r in rows
+            ]
         messages = session.get_messages()
         if last_n is not None:
             messages = messages[-last_n:]
@@ -151,7 +201,11 @@ class ConversationMemory:
         """Return the current TravelContext for a user (empty context if new user)."""
         session = self._sessions.get(user_id)
         if session is None:
-            return TravelContext()
+            with self._db() as db:
+                row = db.get(ChatSessionRecord, user_id)
+                if not row:
+                    return TravelContext()
+                return TravelContext(**json.loads(row.context_json or "{}"))
         return session.get_context()
 
     def is_first_message(self, user_id: str) -> bool:
@@ -162,7 +216,14 @@ class ConversationMemory:
     def message_count(self, user_id: str) -> int:
         """Return the number of messages in a user's history."""
         session = self._sessions.get(user_id)
-        return session.message_count() if session else 0
+        if session:
+            return session.message_count()
+        with self._db() as db:
+            return len(
+                db.scalars(
+                    select(ChatMessageRecord.id).where(ChatMessageRecord.user_id == user_id)
+                ).all()
+            )
 
     async def clear(self, user_id: str) -> bool:
         """
@@ -172,11 +233,21 @@ class ConversationMemory:
             True if the session existed and was cleared, False otherwise.
         """
         session = self._sessions.get(user_id)
-        if session is None:
-            return False
-        await session.clear()
+        if session is not None:
+            await session.clear()
+        with self._db() as db:
+            rows = db.scalars(
+                select(ChatMessageRecord).where(ChatMessageRecord.user_id == user_id)
+            ).all()
+            for row in rows:
+                db.delete(row)
+            srow = db.get(ChatSessionRecord, user_id)
+            if srow:
+                srow.context_json = TravelContext().model_dump_json()
+                srow.updated_at = datetime.now(timezone.utc)
+            db.commit()
         logger.info("Cleared conversation history")
-        return True
+        return bool(session is not None)
 
     def active_session_count(self) -> int:
         """Return the number of active user sessions (for monitoring)."""

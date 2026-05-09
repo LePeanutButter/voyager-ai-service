@@ -27,6 +27,7 @@ For **cross-repo / AWS** context (ALB, RDS, Learner Lab–style deploy, relation
 ## Features
 
 - **Recommendations**: personalized destinations (with optional **seasonality** on rankings), contextual activities, popular / trending / similar, categories, feedback.
+- **Local AI stack (production-oriented)**: `/api/v1/local/*` runs with **Ollama local + embeddings locales + SQLite de memoria IA** para chat y recomendaciones basadas en `user_id`.
 - **Seasonality** (`/api/v1/seasonality`): monthly indices (s=12), per-destination profile, naive seasonal forecast, visibility adjustments for operators.
 - **Users, matching, trends**: profiles, compatibility, emerging trends digest.
 - **Chat**: LLM-backed or offline fallback (configurable).
@@ -49,9 +50,9 @@ Redis and external API keys are referenced in settings for future use; the app s
 ```bash
 git clone https://github.com/LePeanutButter/voyager-ai-service.git
 cd voyager-ai-service
-python -m venv venv
-# Windows: venv\Scripts\activate
-source venv/bin/activate
+python -m .venv .venv
+# Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -76,6 +77,8 @@ Common variables (see `app/core/config.py` for the full list):
 | `DB_HOST`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME`, `DB_PORT`, `DB_SSLMODE` | Build PostgreSQL URL for RDS-style deploys |
 | `MODEL_PATH`, `RECOMMENDATION_MODEL`, … | On-disk ML artifacts under `app/ml/models` |
 | `LLM_PROVIDER`, `LLM_API_KEY`, … | Chat / LLM integration |
+| `AI_SQLITE_PATH` | SQLite local exclusivo para memoria conversacional IA |
+| `OLLAMA_URL`, `LOCAL_MODEL_NAME`, `LOCAL_EMBEDDING_MODEL` | Inferencia y embeddings locales |
 | `ALLOWED_ORIGINS` | CORS allowlist; **comma-separated** string or list (e.g. `http://localhost:5173,http://10.0.0.5:5173`) |
 | `CORS_ALLOW_ORIGIN_REGEX` | Extra allowed origin pattern (no `*` wildcard) |
 | `CORS_ALLOW_EC2_COMPUTE_DNS` | `true` to allow browser origins matching **EC2 public DNS** (`ec2-…amazonaws.com`) only |
@@ -152,6 +155,7 @@ All versioned routes live under **`/api/v1`**. Authentication is not enforced he
 - **Travel preferences** `/api/v1/travel-preferences`
 - **Behavior** `/api/v1/behavior-analysis`
 - **Adaptive UI** `/api/v1/adaptive-ui`
+- **Local AI + real recommendations** `/api/v1/local`
 
 ### Example: personalized destinations with seasonality
 
@@ -215,6 +219,7 @@ Tests live under `tests/` (API, modules, prompts). Coverage thresholds may be en
 ## Deployment
 
 - **Docker**: use the included `Dockerfile`; expose port **8000** (e.g. behind an ALB target group for the AI tier).
+- **Docker Compose (EC2, no host Ollama)**: `docker-compose.yml` runs **Ollama** in one container and the **FastAPI** service in another; the app uses `OLLAMA_URL=http://ollama:11434` on the internal network. Named volumes persist Ollama weights, SQLite files, and ML `.pkl` artifacts. First run: set `OLLAMA_PULL_ON_START=1` in `.env` (slow) or run `docker compose exec ollama ollama pull <LOCAL_MODEL_NAME>`. Optional: uncomment published `11434` or GPU `deploy` in the YAML. Useful vars: `AI_HOST_PORT`, `ALLOWED_ORIGINS`, `CORS_ALLOW_EC2_COMPUTE_DNS`.
 - **EC2 / Learner Lab**: see `scripts/ec2-deploy-ai-service.sh` and `scripts/deploy-ai-service-manual.sh` for image + artifact transfer patterns aligned with **voyager-infrastructure**.
 
 Tune `ALLOWED_ORIGINS` / `CORS_*` on the instance to match how clients reach the web UI.

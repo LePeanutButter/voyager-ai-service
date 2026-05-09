@@ -90,3 +90,14 @@ class VisibilityAdjustmentsResponse(BaseModel):
     travel_month: int
     rows: List[VisibilityAdjustmentRow]
     methodology_note: str
+
+
+class SeasonalityIngestRow(BaseModel):
+    destination_id: str
+    name: str
+    country: str
+    monthly_indices: List[float] = Field(min_length=12, max_length=12)
+
+
+class SeasonalityIngestRequest(BaseModel):
+    rows: List[SeasonalityIngestRow] = Field(min_length=1)

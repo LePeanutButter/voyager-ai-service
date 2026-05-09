@@ -12,18 +12,32 @@ import logging
 import inspect
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.api.deps import MatchingServiceDep
 from app.modules.matching.schemas import (
     ConnectionOutcomeRequest,
     ConnectionOutcomeResponse,
+    MatchingProfilesIngestRequest,
     MatchingResponse,
     TravelerMatchRequest,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+@router.post(
+    "/profiles/ingest",
+    responses={500: {"description": "Failed to ingest matching profiles"}},
+)
+async def ingest_matching_profiles(body: MatchingProfilesIngestRequest, service: MatchingServiceDep):
+    try:
+        count = await _resolve(service.ingest_profiles([p.model_dump() for p in body.profiles]))
+        return {"message": "Matching profiles ingested", "profiles": count}
+    except Exception as e:
+        logger.error("Error ingesting matching profiles: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to ingest matching profiles")
 
 
 async def _resolve(value):
@@ -227,14 +241,19 @@ async def get_travel_buddy_recommendations(
     user_id: str,
     service: MatchingServiceDep,
     location: Optional[str] = None,
+    seeker_footprint: Optional[str] = Query(
+        None,
+        description="Comma-separated destinations from seeker's trip history / plans for overlap scoring",
+    ),
     limit: int = 10,
 ):
-    """Suggests travel buddies by location and limits.
+    """Suggests travel buddies using profile fit + shared destinations (footprint / plan focus).
 
     Args:
         user_id: User to recommend for.
         service: `MatchingService`.
-        location: Optional geographic filter.
+        location: Optional **focus** destination (e.g. selected plan city); boosts overlap, does not hard-filter.
+        seeker_footprint: Comma-separated extra destinations (past/future plans).
         limit: Max suggestions.
 
     Returns:
@@ -245,8 +264,9 @@ async def get_travel_buddy_recommendations(
     """
     try:
         logger.info("Getting travel buddy recommendations")
+        fp_list = [p.strip() for p in (seeker_footprint or "").split(",") if p.strip()]
         recommendations = await _resolve(
-            service.get_travel_buddy_recommendations(user_id, location, limit)
+            service.get_travel_buddy_recommendations(user_id, location, limit, fp_list)
         )
         return {
             "user_id": user_id,

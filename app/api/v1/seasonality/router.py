@@ -1,12 +1,13 @@
 """HTTP API for seasonality indices, forecasts, and visibility adjustments (business paper)."""
 
 import logging
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
 from app.api.deps import SeasonalityServiceDep
 from app.modules.seasonality.schemas import (
+    SeasonalityIngestRequest,
     SeasonalForecastRequest,
     SeasonalForecastResponse,
     SeasonalityOverviewResponse,
@@ -18,14 +19,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.post(
+    "/ingest/profiles",
+    responses={500: {"description": "Failed to ingest seasonality profiles"}},
+)
+async def ingest_seasonality_profiles(body: SeasonalityIngestRequest, service: SeasonalityServiceDep):
+    try:
+        service.ingest_profiles([r.model_dump() for r in body.rows])
+        return {"message": "Seasonality profiles ingested", "rows": len(body.rows)}
+    except Exception as e:
+        logger.error("seasonality ingest failed: %s", e)
+        raise HTTPException(status_code=500, detail="Seasonality ingest failed") from e
+
+
 @router.get(
     "/overview",
     response_model=SeasonalityOverviewResponse,
     summary="Perfiles estacionales (s=12) para destinos del catálogo",
+    responses={500: {"description": "Seasonality overview failed"}},
 )
 async def seasonality_overview(
     service: SeasonalityServiceDep,
-    reference_month: Optional[int] = Query(None, ge=1, le=12),
+    reference_month: Annotated[Optional[int], Query(ge=1, le=12)] = None,
 ):
     try:
         return service.overview(reference_month=reference_month)
@@ -37,6 +52,7 @@ async def seasonality_overview(
 @router.get(
     "/destinations/{destination_id}",
     summary="Perfil estacional de un destino",
+    responses={404: {"description": "Unknown destination_id for seasonality"}},
 )
 async def destination_seasonal_profile(destination_id: str, service: SeasonalityServiceDep):
     profile = service.profile(destination_id)
@@ -49,6 +65,7 @@ async def destination_seasonal_profile(destination_id: str, service: Seasonality
     "/forecast",
     response_model=SeasonalForecastResponse,
     summary="Pronóstico ingenuo estacional (placeholder hasta SARIMA con datos reales)",
+    responses={500: {"description": "Forecast failed"}},
 )
 async def seasonal_forecast(body: SeasonalForecastRequest, service: SeasonalityServiceDep):
     try:
@@ -64,6 +81,7 @@ async def seasonal_forecast(body: SeasonalForecastRequest, service: SeasonalityS
     "/visibility-adjustments",
     response_model=VisibilityAdjustmentsResponse,
     summary="Factores de visibilidad por destino y mes (operadores / mitigación)",
+    responses={500: {"description": "Visibility adjustments failed"}},
 )
 async def visibility_adjustments(body: VisibilityAdjustmentsRequest, service: SeasonalityServiceDep):
     try:

@@ -1,0 +1,110 @@
+"""Spanish local chatbot orchestrator (SQLite memory + local model + real recommendations)."""
+
+from __future__ import annotations
+
+import logging
+from typing import Dict, List, Optional
+
+from app.ai.embeddings.local_embeddings import LocalEmbeddingService
+from app.ai.memory.repository import AIMemoryRepository
+from app.ai.models.local_ollama_client import LocalOllamaClient
+
+logger = logging.getLogger(__name__)
+
+
+class LocalSpanishChatbotService:
+    """Orquestador chat local. Los embeddings se cargan bajo demanda para no tumbar el arranque."""
+
+    def __init__(self) -> None:
+        self.memory = AIMemoryRepository()
+        self._embedder: Optional[LocalEmbeddingService] = None
+        self._embedder_init_error: Optional[str] = None
+        self.llm = LocalOllamaClient()
+
+    def _get_embedder(self) -> Optional[LocalEmbeddingService]:
+        if self._embedder_init_error is not None:
+            return None
+        if self._embedder is None:
+            try:
+                self._embedder = LocalEmbeddingService()
+            except Exception as exc:
+                self._embedder_init_error = str(exc)
+                logger.warning(
+                    "Embeddings locales no inicializados (chat sigue sin vectores en memoria): %s",
+                    exc,
+                )
+                return None
+        return self._embedder
+
+    def _safe_embed(self, text: str) -> Optional[List[float]]:
+        embedder = self._get_embedder()
+        if embedder is None:
+            return None
+        try:
+            return embedder.embed(text)
+        except Exception as exc:
+            logger.warning("Embeddings locales no disponibles o fallaron: %s", exc)
+            return None
+
+    async def chat(self, user_id: str, session_id: str, message: str) -> Dict[str, object]:
+        self.memory.ensure_session(session_id=session_id, user_id=user_id)
+        user_embedding = self._safe_embed(message)
+        self.memory.add_message(session_id, "user", message, user_embedding)
+
+        history = self.memory.get_recent_messages(session_id, limit=10)
+        wants_recommendations = any(k in message.lower() for k in ("recom", "suger", "producto", "comprar"))
+
+        recommendation_snippet = ""
+        if wants_recommendations:
+            recommendation_snippet = (
+                "No hay candidatos en esta solicitud de chat. "
+                "Envia candidatos reales en /api/v1/local/recommendations para obtener ranking."
+            )
+
+        system_prompt = (
+            "Eres un asistente de IA local para usuarios hispanohablantes. "
+            "Responde siempre en español natural, concreto y profesional. "
+            "No inventes datos que no existan en el contexto. "
+            "Si hay recomendaciones, intégralas con justificación breve."
+        )
+        prompt = self._build_user_prompt(message, history, recommendation_snippet)
+        assistant_text = await self.llm.generate(
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+        )
+        if not str(assistant_text).strip():
+            assistant_text = (
+                "El modelo no devolvió texto. Revisa Ollama y el nombre del modelo en LOCAL_MODEL_NAME."
+            )
+
+        self.memory.add_message(
+            session_id=session_id,
+            role="assistant",
+            content=assistant_text,
+            embedding=self._safe_embed(assistant_text),
+        )
+        return {
+            "session_id": session_id,
+            "reply": assistant_text,
+            "used_recommendations": wants_recommendations,
+            "recommendations": [],
+        }
+
+    def history(self, session_id: str, limit: int = 20) -> List[Dict[str, str]]:
+        return self.memory.get_recent_messages(session_id=session_id, limit=limit)
+
+    def _build_user_prompt(
+        self,
+        user_message: str,
+        history: List[Dict[str, str]],
+        recommendation_snippet: str,
+    ) -> str:
+        context = "\n".join([f"{m['role']}: {m['content']}" for m in history[-6:]])
+        return (
+            "Contexto reciente:\n"
+            f"{context}\n\n"
+            "Recomendaciones calculadas en IA local:\n"
+            f"{recommendation_snippet}\n\n"
+            "Mensaje actual del usuario:\n"
+            f"{user_message}\n\n"
+            "Responde en español."
+        )

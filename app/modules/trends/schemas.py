@@ -8,9 +8,26 @@ Dependencies:
 """
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+
+class MicroTrendGeo(BaseModel):
+    """Geographic anchor for a digest micro-trend (explore + Amadeus catalog hints)."""
+
+    destination_id: str = Field(
+        default="",
+        description="Stable id (e.g. dst_zurich), aligned with trends / seasonality slugs",
+    )
+    name: str = Field(default="", description="Primary city or place label")
+    country: str = ""
+    latitude: Optional[float] = Field(default=None, description="WGS84")
+    longitude: Optional[float] = Field(default=None, description="WGS84")
+    city_code: str = Field(
+        default="",
+        description="IATA city code for hotel catalog (Amadeus)",
+    )
 
 
 class EmergingDestinationTrend(BaseModel):
@@ -71,6 +88,10 @@ class MicroTrendOpportunity(BaseModel):
     affected_segments: List[str] = Field(default_factory=list)
     opportunity_score: float = Field(..., ge=0.0, le=1.0)
     suggested_action: str = ""
+    geo: Optional[MicroTrendGeo] = Field(
+        default=None,
+        description="Primary geography for this trend (enables destination explore in clients)",
+    )
 
 
 class PartnerTrendNotification(BaseModel):
@@ -93,3 +114,20 @@ class WeeklyTrendsDigestResponse(BaseModel):
     micro_trends: List[MicroTrendOpportunity]
     partner_notifications: List[PartnerTrendNotification]
     next_refresh_note: str = "Schedulable weekly analysis (replace with job + queue in production)."
+
+
+class TrendSignalIngestRow(BaseModel):
+    destination_id: str
+    name: str
+    country: str
+    tags: List[str] = Field(default_factory=list)
+    previous: int = Field(ge=0)
+    current: int = Field(ge=0)
+
+
+class TrendSignalIngestRequest(BaseModel):
+    rows: List[TrendSignalIngestRow] = Field(min_length=1)
+
+
+class TrendSegmentsIngestRequest(BaseModel):
+    segments: Dict[str, Any] = Field(min_length=1)

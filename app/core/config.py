@@ -14,13 +14,17 @@ from typing import List, Optional
 from urllib.parse import quote_plus
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Origen browser típico cuando el front resuelve el DNS público de la instancia EC2
 # (p. ej. Learner Lab). No coincide con IP literal ni con otros dominios.
 _EC2_COMPUTE_PUBLIC_DNS_ORIGIN_REGEX = (
     r"^https?://ec2-(?:\d{1,3}-){3}\d{1,3}\.[a-z0-9.-]+\.amazonaws\.com(?::\d+)?$"
 )
+
+# Orígenes CORS por defecto solo para desarrollo local (frontends sin TLS).
+# En producción debe definirse ALLOWED_ORIGINS (p. ej. https://…) por variable de entorno.
+_DEFAULT_ALLOWED_ORIGINS_DEV = "http://localhost:3000,http://localhost:8080,http://localhost:5173"  # NOSONAR python:S5332 - HTTP en localhost para CORS en dev es intencional y acotado.
 
 
 class Settings(BaseSettings):
@@ -31,8 +35,14 @@ class Settings(BaseSettings):
 
     Attributes:
         Declared fields (see body): all configurable via env with the same name
-        and `case_sensitive=True` in `Config`.
+        and `case_sensitive=True` en ``model_config``.
     """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        env_ignore_empty=True,
+    )
 
     # Service configuration
     SERVICE_NAME: str = "tourism-assistant"
@@ -46,13 +56,10 @@ class Settings(BaseSettings):
 
     # API configuration
     API_V1_STR: str = "/api/v1"
-    # CORS: lista explícita. En env puedes usar CSV: http://localhost:3000,http://1.2.3.4:5173
-    ALLOWED_ORIGINS: List[str] = Field(
-        default_factory=lambda: [
-            "http://localhost:3000",
-            "http://localhost:8080",
-            "http://localhost:5173",
-        ],
+    # CORS: en variable de entorno usar CSV (pydantic-settings no aplica el validador antes de json.loads en List).
+    ALLOWED_ORIGINS: str = Field(
+        default=_DEFAULT_ALLOWED_ORIGINS_DEV,
+        description="Orígenes CORS separados por comas (misma variable ALLOWED_ORIGINS).",
     )
     # Regex adicional (sin usar *). Útil para patrones de laboratorio (p. ej. Vocareum).
     CORS_ALLOW_ORIGIN_REGEX: str = Field(
@@ -78,6 +85,16 @@ class Settings(BaseSettings):
     DB_PASSWORD: str = ""
     # RDS: usar "require" igual que JDBC ?sslmode=require en Spring.
     DB_SSLMODE: str = ""
+
+    # -----------------------------------------------------------------------
+    # AI local DB (memory + recommendation state)
+    # -----------------------------------------------------------------------
+    AI_SQLITE_PATH: str = "./data/ai_memory.db"
+    LOCAL_MODEL_NAME: str = "mistral:7b-instruct"
+    OLLAMA_URL: str = "http://127.0.0.1:11434"
+    # Tiempo máx. de lectura en POST /api/chat (carga del modelo en CPU puede tardar 60s+ antes de inferir).
+    OLLAMA_HTTP_TIMEOUT_SECONDS: float = 300.0
+    LOCAL_EMBEDDING_MODEL: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
     # ML Model configuration
     MODEL_PATH: str = "./app/ml/models"
@@ -155,11 +172,16 @@ class Settings(BaseSettings):
 
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod
-    def _parse_allowed_origins(cls, v):
+    def _normalize_allowed_origins_str(cls, v):
         if v is None:
             return v
+        if isinstance(v, list):
+            return ",".join(str(x).strip() for x in v if str(x).strip())
         if isinstance(v, str):
-            return [x.strip() for x in v.split(",") if x.strip()]
+            s = v.strip()
+            if not s:
+                return _DEFAULT_ALLOWED_ORIGINS_DEV
+            return s
         return v
 
     @field_validator("DATABASE_URL", mode="before")
@@ -208,9 +230,10 @@ class Settings(BaseSettings):
             return None
         return "|".join(parts) if len(parts) > 1 else parts[0]
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    @property
+    def allowed_origins_list(self) -> List[str]:
+        """Lista de orígenes CORS a partir de ``ALLOWED_ORIGINS`` (CSV)."""
+        return [x.strip() for x in self.ALLOWED_ORIGINS.split(",") if x.strip()]
 
 
 # Create global settings instance

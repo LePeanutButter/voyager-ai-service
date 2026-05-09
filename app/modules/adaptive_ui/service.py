@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
@@ -179,11 +179,7 @@ class AdaptiveUIService:
         Returns:
             List of interaction dicts or empty list if none.
         """
-        if user_id not in self._behavior.behavior_data:
-            return []
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        interactions = self._behavior.behavior_data[user_id]["interactions"]
-        return [i for i in interactions if i["timestamp"] > cutoff]
+        return self._behavior.get_recent_interactions(user_id=user_id, days=days)
 
     def build_menu_adaptation(self, user_id: str) -> MenuAdaptationResponse:
         """Builds primary and secondary menu items from ``nav_item_id`` frequency.

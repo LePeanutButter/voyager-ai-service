@@ -1,110 +1,173 @@
+import os
+import pickle
+
 import pytest
 
+from app.core.config import settings
 from app.ml.model_loader import (
     BaseModel,
     ModelManager,
     RecommendationModel,
-    TravelerMatchingModel,
     UserProfilingModel,
+    TravelerMatchingModel,
 )
 
 
+class _Predictor:
+    def predict(self, data):
+        return {"echo": data}
+
+
+class _CallableArtifact:
+    """Pickle-friendly callable for ``BaseModel._call_predict``."""
+
+    def __call__(self, data):
+        return {"compatibility_score": 0.66}
+
+
+class _BadPredictor:
+    def predict(self, data):
+        raise ValueError("boom")
+
+
+def _write_artifact(path, obj=None):
+    with open(path, "wb") as f:
+        pickle.dump(obj if obj is not None else _Predictor(), f)
+
+
 @pytest.mark.asyncio
-async def test_model_manager_lifecycle():
+async def test_model_manager_lifecycle(tmp_path, monkeypatch):
+    _write_artifact(tmp_path / settings.RECOMMENDATION_MODEL)
+    _write_artifact(tmp_path / settings.USER_PROFILING_MODEL)
+    _write_artifact(tmp_path / settings.MATCHING_MODEL)
+    monkeypatch.setattr(settings, "MODEL_PATH", str(tmp_path))
+
     mm = ModelManager()
     ok = await mm.load_models()
     assert ok is True
-    assert mm.is_ready()
-    meta = mm.get_model_metadata()
-    assert "recommendation_model" in meta
-    val = await mm.validate_all_models()
-    assert isinstance(val, dict)
-    rel = await mm.reload_model("recommendation_model")
-    assert rel is True
-    bad = await mm.reload_model("nonexistent")
-    assert bad is False
+    assert mm.is_ready() is True
+    assert await mm.reload_model("recommendation_model") is True
     await mm.shutdown()
-    assert not mm.is_ready()
+    assert mm.is_ready() is False
 
 
 @pytest.mark.asyncio
-async def test_recommendation_model(tmp_path):
-    m = RecommendationModel(str(tmp_path / "x.pkl"))
+async def test_recommendation_model_missing_file(tmp_path):
+    model = RecommendationModel(str(tmp_path / "missing.pkl"))
+    assert await model.load_model() is False
+    with pytest.raises(RuntimeError):
+        await model.predict({"x": 1})
+
+
+def test_base_model_interface_exposed():
+    assert BaseModel.__abstractmethods__
+
+
+@pytest.mark.asyncio
+async def test_base_model_call_predict_callable_artifact(tmp_path):
+    path = tmp_path / "callable.pkl"
+    _write_artifact(path, _CallableArtifact())
+    m = RecommendationModel(str(path))
     assert await m.load_model() is True
-    pred = await m.predict({"user_id": "a", "context": {}})
-    assert "user_id" in pred
-    assert await m.validate_model() in (True, False)
+    out = await m.predict({"healthcheck": True})
+    assert out["compatibility_score"] == 0.66
 
 
 @pytest.mark.asyncio
-async def test_user_profiling_model(tmp_path):
-    m = UserProfilingModel(str(tmp_path / "u.pkl"))
-    await m.load_model()
-    out = await m.predict({"user_id": "u", "interactions": []})
-    assert "user_id" in out
+async def test_validate_model_false_when_predict_raises(tmp_path):
+    path = tmp_path / "bad.pkl"
+    _write_artifact(path, _BadPredictor())
+    m = RecommendationModel(str(path))
+    assert await m.load_model() is True
+    assert await m.validate_model() is False
 
 
 @pytest.mark.asyncio
-async def test_traveler_model(tmp_path):
-    m = TravelerMatchingModel(str(tmp_path / "m.pkl"))
-    await m.load_model()
-    out = await m.predict(
-        {
-            "user1_id": "a",
-            "user2_id": "b",
-            "user1_profile": {},
-            "user2_profile": {},
-        }
-    )
-    assert "compatibility_score" in out
+async def test_validate_model_not_loaded():
+    m = RecommendationModel("/nonexistent/model.pkl")
+    assert await m.validate_model() is False
 
 
 @pytest.mark.asyncio
-async def test_models_raise_when_not_loaded(tmp_path):
-    rec = RecommendationModel(str(tmp_path / "r.pkl"))
-    usr = UserProfilingModel(str(tmp_path / "u.pkl"))
-    mat = TravelerMatchingModel(str(tmp_path / "m.pkl"))
-
-    with pytest.raises(RuntimeError):
-        await rec.predict({})
-    with pytest.raises(RuntimeError):
-        await usr.predict({})
-    with pytest.raises(RuntimeError):
-        await mat.predict({})
-
-    assert await rec.validate_model() is False
-    assert await usr.validate_model() is False
-    assert await mat.validate_model() is False
+async def test_model_manager_load_models_aborts_on_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "MODEL_PATH", str(tmp_path))
+    _write_artifact(tmp_path / settings.RECOMMENDATION_MODEL)
+    mm = ModelManager()
+    assert await mm.load_models() is False
+    assert mm.is_initialized is False
 
 
 @pytest.mark.asyncio
-async def test_model_manager_validate_handles_exception(monkeypatch):
+async def test_model_manager_metadata_validate_reload_unknown(tmp_path, monkeypatch):
+    _write_artifact(tmp_path / settings.RECOMMENDATION_MODEL)
+    _write_artifact(tmp_path / settings.USER_PROFILING_MODEL)
+    _write_artifact(tmp_path / settings.MATCHING_MODEL)
+    monkeypatch.setattr(settings, "MODEL_PATH", str(tmp_path))
+
     mm = ModelManager()
     await mm.load_models()
-    model = mm.get_model("recommendation_model")
-    assert model is not None
+    meta = mm.get_model_metadata()
+    assert "recommendation_model" in meta and meta["recommendation_model"]["is_loaded"] is True
+    results = await mm.validate_all_models()
+    assert all(results.values())
+    assert await mm.reload_model("does_not_exist") is False
 
-    async def boom():
-        raise RuntimeError("validation crash")
 
-    monkeypatch.setattr(model, "validate_model", boom)
+@pytest.mark.asyncio
+async def test_validate_all_models_exception_per_model(tmp_path, monkeypatch):
+    _write_artifact(tmp_path / settings.RECOMMENDATION_MODEL)
+    _write_artifact(tmp_path / settings.USER_PROFILING_MODEL)
+    _write_artifact(tmp_path / settings.MATCHING_MODEL)
+    monkeypatch.setattr(settings, "MODEL_PATH", str(tmp_path))
+
+    mm = ModelManager()
+    await mm.load_models()
+
+    async def boom(self):
+        raise RuntimeError("validation boom")
+
+    monkeypatch.setattr(RecommendationModel, "validate_model", boom)
     out = await mm.validate_all_models()
     assert out["recommendation_model"] is False
 
 
 @pytest.mark.asyncio
-async def test_model_manager_reload_failure(monkeypatch):
+async def test_user_profiling_and_matching_predict_guard(tmp_path):
+    um = UserProfilingModel(str(tmp_path / "missing_up.pkl"))
+    tm = TravelerMatchingModel(str(tmp_path / "missing_tm.pkl"))
+    assert await um.load_model() is False
+    assert await tm.load_model() is False
+    with pytest.raises(RuntimeError):
+        await um.predict({})
+    with pytest.raises(RuntimeError):
+        await tm.predict({})
+
+
+@pytest.mark.asyncio
+async def test_model_manager_load_models_outer_exception(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "MODEL_PATH", str(tmp_path))
+
+    def boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "makedirs", boom)
+    mm = ModelManager()
+    assert await mm.load_models() is False
+
+
+@pytest.mark.asyncio
+async def test_reload_model_reports_failure_when_reload_returns_false(tmp_path, monkeypatch):
+    _write_artifact(tmp_path / settings.RECOMMENDATION_MODEL)
+    _write_artifact(tmp_path / settings.USER_PROFILING_MODEL)
+    _write_artifact(tmp_path / settings.MATCHING_MODEL)
+    monkeypatch.setattr(settings, "MODEL_PATH", str(tmp_path))
+
     mm = ModelManager()
     await mm.load_models()
-    model = mm.get_model("recommendation_model")
-    assert model is not None
 
-    async def fail_load():
+    async def fail_load(_self):
         return False
 
-    monkeypatch.setattr(model, "load_model", fail_load)
+    monkeypatch.setattr(RecommendationModel, "load_model", fail_load)
     assert await mm.reload_model("recommendation_model") is False
 
-
-def test_base_model_interface_exposed():
-    assert BaseModel.__abstractmethods__

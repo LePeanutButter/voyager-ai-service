@@ -10,11 +10,15 @@ real time series are ingested from RDS / analytics.
 from __future__ import annotations
 
 import math
-import random
+import json
 from datetime import datetime, timezone
 from typing import Dict, List, Literal, Optional, Tuple
 
+from sqlalchemy import select
+
 from app.core.config import settings
+from app.db import database as db_database
+from app.db.runtime_models import SeasonalityProfileRecord
 from app.modules.seasonality.schemas import (
     DestinationSeasonalProfile,
     ForecastPoint,
@@ -26,22 +30,7 @@ from app.modules.seasonality.schemas import (
     VisibilityAdjustmentsResponse,
 )
 
-# Mirrors destination catalog IDs (avoid import cycle with recommendations.service).
-_KNOWN_DESTINATIONS: List[Tuple[str, str, str, bool]] = [
-    ("dst_barcelona", "Barcelona", "Spain", False),
-    ("dst_kyoto", "Kyoto", "Japan", False),
-    ("dst_queenstown", "Queenstown", "New Zealand", True),
-    ("dst_maldives", "Maldives", "Maldives", False),
-    ("dst_lima", "Lima", "Peru", False),
-    ("dst_reykjavik", "Reykjavik", "Iceland", False),
-    ("dst_marrakech", "Marrakech", "Morocco", False),
-    ("dst_bali", "Bali", "Indonesia", False),
-    ("dst_lisbon", "Lisbon", "Portugal", False),
-    ("dst_patagonia", "Patagonia", "Argentina/Chile", True),
-    ("dst_azores", "Azores", "Portugal", False),
-    ("dst_georgia", "Georgia (Caucasus)", "Georgia", False),
-    ("dst_slovenia", "Slovenia", "Slovenia", False),
-]
+_KNOWN_DESTINATIONS: List[Tuple[str, str, str, bool]] = []
 
 Phase = Literal["peak", "shoulder", "off_peak"]
 
@@ -50,44 +39,57 @@ class SeasonalityService:
     """Monthly seasonal indices (s=12) and visibility mitigation for recommendations."""
 
     def __init__(self) -> None:
+        db_database.init_db_engine()
         self._monthly_index: Dict[str, List[float]] = {}
-        self._build_profiles()
+        self._destination_meta: Dict[str, Tuple[str, str]] = {}
+        self._load_profiles()
 
-    def _synthetic_monthly_demands(
-        self, destination_id: str, southern_hemisphere: bool
-    ) -> List[float]:
-        """36 months of synthetic demand (seasonal + noise); base for seasonal averages."""
-        rng = random.Random(hash(destination_id) % (2**31))
-        series: List[float] = []
-        for t in range(settings.SEASONALITY_HISTORY_MONTHS):
-            month = (t % 12) + 1
-            # Peak in northern summer by default; invert phase for southern ski/summer
-            angle = 2.0 * math.pi * (month - 6.5) / 12.0
-            if southern_hemisphere:
-                angle = -angle
-            seasonal = 1.0 + settings.SEASONALITY_AMPLITUDE * math.sin(angle)
-            noise = rng.uniform(0.94, 1.06)
-            series.append(max(0.05, seasonal * noise))
-        return series
+    @staticmethod
+    def _db():
+        assert db_database.SessionLocal is not None
+        return db_database.SessionLocal()
 
-    def _build_profiles(self) -> None:
-        for dest_id, _name, _country, south in _KNOWN_DESTINATIONS:
-            series = self._synthetic_monthly_demands(dest_id, south)
-            buckets: List[List[float]] = [[] for _ in range(12)]
-            for t, v in enumerate(series):
-                m = (t % 12)
-                buckets[m].append(v)
-            monthly_avg = [sum(b) / len(b) for b in buckets]
-            overall = sum(monthly_avg) / 12.0
-            indices = [round(x / overall, 4) for x in monthly_avg]
-            self._monthly_index[dest_id] = indices
+    def _load_profiles(self) -> None:
+        with self._db() as db:
+            rows = db.scalars(select(SeasonalityProfileRecord)).all()
+        for row in rows:
+            self._monthly_index[row.destination_id] = [float(x) for x in json.loads(row.monthly_indices_json)]
+            self._destination_meta[row.destination_id] = (row.name, row.country)
+
+    def ingest_profiles(self, rows: List[Dict[str, object]]) -> None:
+        """Replace in-memory seasonal profiles with external ingested data."""
+        self._monthly_index = {}
+        self._destination_meta = {}
+        persist_rows: List[SeasonalityProfileRecord] = []
+        for row in rows:
+            destination_id = str(row["destination_id"])
+            indices = [float(x) for x in row["monthly_indices"]]
+            if len(indices) != 12:
+                raise ValueError("monthly_indices must contain exactly 12 values")
+            self._monthly_index[destination_id] = indices
+            self._destination_meta[destination_id] = (str(row["name"]), str(row["country"]))
+            persist_rows.append(
+                SeasonalityProfileRecord(
+                    destination_id=destination_id,
+                    name=str(row["name"]),
+                    country=str(row["country"]),
+                    monthly_indices_json=json.dumps(indices),
+                    updated_at=datetime.now(timezone.utc),
+                )
+            )
+        with self._db() as db:
+            for old in db.scalars(select(SeasonalityProfileRecord)).all():
+                db.delete(old)
+            for pr in persist_rows:
+                db.add(pr)
+            db.commit()
 
     def demand_index(self, destination_id: str, month: int) -> float:
         """Relative demand vs annual mean for calendar month (1–12)."""
         m = max(1, min(12, month))
         row = self._monthly_index.get(destination_id)
         if not row:
-            return 1.0
+            raise ValueError(f"destination_id '{destination_id}' not ingested")
         return float(row[m - 1])
 
     def classify_phase(self, index: float) -> Phase:
@@ -124,9 +126,9 @@ class SeasonalityService:
         row = self._monthly_index.get(destination_id)
         if not row:
             return None
-        meta = next((x for x in _KNOWN_DESTINATIONS if x[0] == destination_id), None)
-        name = meta[1] if meta else destination_id
-        country = meta[2] if meta else ""
+        meta = self._destination_meta.get(destination_id, (destination_id, ""))
+        name = meta[0]
+        country = meta[1]
         points: List[MonthlyDemandPoint] = []
         for mi, idx in enumerate(row, start=1):
             points.append(
@@ -144,7 +146,7 @@ class SeasonalityService:
     def overview(self, reference_month: Optional[int] = None) -> SeasonalityOverviewResponse:
         now_m = reference_month or datetime.now(timezone.utc).month
         profiles: List[DestinationSeasonalProfile] = []
-        for dest_id, _, _, _ in _KNOWN_DESTINATIONS:
+        for dest_id in self._monthly_index.keys():
             p = self.profile(dest_id)
             if p:
                 profiles.append(p)
@@ -169,7 +171,7 @@ class SeasonalityService:
                 destination_id=destination_id,
                 generated_at=datetime.now(timezone.utc),
                 points=[],
-                methodology_note="Destino sin serie sintética; ingesta RDS pendiente.",
+                methodology_note="Destino sin serie cargada; ingiere perfiles estacionales vía endpoint.",
             )
         points: List[ForecastPoint] = []
         m = max(1, min(12, start_month))

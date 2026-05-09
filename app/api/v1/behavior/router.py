@@ -227,8 +227,8 @@ async def clear_user_behavior_data(user_id: str, service: BehaviorAnalysisServic
         HTTPException: 500 on unexpected error.
     """
     try:
-        if hasattr(service, "behavior_data") and user_id in service.behavior_data:
-            del service.behavior_data[user_id]
+        cleared = service.clear_user_behavior_data(user_id)
+        if cleared:
             return APIResponse(
                 success=True,
                 message="Behavior data cleared successfully",

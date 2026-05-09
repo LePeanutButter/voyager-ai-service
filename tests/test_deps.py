@@ -24,13 +24,6 @@ def _request_with_state(**attrs):
     return _Req()
 
 
-def test_get_recommendation_service_missing():
-    req = _request_with_state()
-    with pytest.raises(HTTPException) as exc:
-        deps.get_recommendation_service(req)
-    assert exc.value.status_code == 503
-
-
 def test_get_user_service_missing():
     req = _request_with_state()
     with pytest.raises(HTTPException) as exc:
@@ -42,6 +35,13 @@ def test_get_matching_service_missing():
     req = _request_with_state()
     with pytest.raises(HTTPException) as exc:
         deps.get_matching_service(req)
+    assert exc.value.status_code == 503
+
+
+def test_get_seasonality_service_missing():
+    req = _request_with_state()
+    with pytest.raises(HTTPException) as exc:
+        deps.get_seasonality_service(req)
     assert exc.value.status_code == 503
 
 

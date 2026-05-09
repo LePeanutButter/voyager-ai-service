@@ -1,8 +1,8 @@
 """Aggregator for HTTP routers under the `/api/v1` prefix.
 
 Responsibilities:
-    Mount a single `APIRouter` with sub-routers per domain (recommendations,
-    users, matching, trends, seasonality, chat, preferences, behavior, adaptive UI).
+    Mount a single `APIRouter` with sub-routers per domain (users, matching, trends,
+    seasonality, chat, local-ai, preferences, behavior, adaptive UI).
 
 Dependencies:
     `APIRouter` definitions and `app.api.v1.*.router` submodules.
@@ -13,20 +13,15 @@ from fastapi import APIRouter
 from app.api.v1.adaptive_ui.router import router as adaptive_ui_router
 from app.api.v1.behavior.router import router as behavior_router
 from app.api.v1.chat.router import router as chat_router
+from app.api.v1.local_ai.router import router as local_ai_router
 from app.api.v1.matching.router import router as matching_router
 from app.api.v1.preferences.router import router as preferences_router
-from app.api.v1.recommendations.router import router as recommendations_router
 from app.api.v1.seasonality.router import router as seasonality_router
 from app.api.v1.trends.router import router as trends_router
 from app.api.v1.users.router import router as users_router
 
 api_v1_router = APIRouter()
 
-api_v1_router.include_router(
-    recommendations_router,
-    prefix="/recommendations",
-    tags=["recommendations"],
-)
 api_v1_router.include_router(users_router, prefix="/users", tags=["users"])
 api_v1_router.include_router(matching_router, prefix="/matching", tags=["matching"])
 api_v1_router.include_router(trends_router, prefix="/trends", tags=["trends"])
@@ -36,6 +31,7 @@ api_v1_router.include_router(
     tags=["seasonality"],
 )
 api_v1_router.include_router(chat_router, prefix="/chat", tags=["chat"])
+api_v1_router.include_router(local_ai_router, prefix="/local", tags=["local-ai"])
 api_v1_router.include_router(
     preferences_router,
     prefix="/travel-preferences",
