@@ -12,7 +12,7 @@ Dependencies:
     ``settings``, enums, ``matching.schemas``, ``model_manager``, ``MatchingLearningStore``.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 import logging
 import json
 from datetime import datetime, timedelta, timezone
@@ -31,6 +31,67 @@ from app.db.runtime_models import MatchingConnectionRecord, MatchingProfileRecor
 from app.ml.learning_store import MatchingLearningStore
 
 logger = logging.getLogger(__name__)
+
+
+def _norm_dest(value: Optional[str]) -> str:
+    return str(value or "").strip().lower()
+
+
+def _as_str_list(val: Any) -> List[str]:
+    if val is None:
+        return []
+    if isinstance(val, str):
+        return [x.strip() for x in val.split(",") if x.strip()]
+    if isinstance(val, list):
+        return [str(x).strip() for x in val if str(x).strip()]
+    return []
+
+
+def _profile_destinations(profile: Dict[str, Any]) -> Set[str]:
+    out: Set[str] = set()
+    for d in _as_str_list(profile.get("travel_footprint")):
+        n = _norm_dest(d)
+        if n:
+            out.add(n)
+    loc = _norm_dest(profile.get("location"))
+    if loc:
+        out.add(loc)
+    return out
+
+
+def _seeker_destinations(
+    user_profile: Dict[str, Any],
+    focus_destination: Optional[str],
+    seeker_footprint: Optional[List[str]],
+) -> Set[str]:
+    out = _profile_destinations(user_profile)
+    if focus_destination:
+        out.add(_norm_dest(focus_destination))
+    for d in seeker_footprint or []:
+        n = _norm_dest(d)
+        if n:
+            out.add(n)
+    return out
+
+
+def _shared_destination_labels(user_data: Dict[str, Any], overlap_norm: Set[str]) -> List[str]:
+    labels: List[str] = []
+    seen: Set[str] = set()
+    for d in _as_str_list(user_data.get("travel_footprint")):
+        n = _norm_dest(d)
+        if n in overlap_norm:
+            label = str(d).strip()
+            if n not in seen:
+                seen.add(n)
+                labels.append(label)
+    loc = user_data.get("location")
+    if loc and _norm_dest(loc) in overlap_norm:
+        label = str(loc).strip()
+        n = _norm_dest(label)
+        if n not in seen:
+            seen.add(n)
+            labels.append(label)
+    return labels[:8]
 
 
 class MatchingService:
@@ -337,13 +398,24 @@ class MatchingService:
             logger.error(f"Error responding to connection: {str(e)}")
             return None
     
-    def get_travel_buddy_recommendations(self, user_id: str, location: Optional[str] = None, limit: int = 10) -> List[TravelerMatch]:
-        """Ranks ingested users by simple compatibility, optionally by location.
+    def get_travel_buddy_recommendations(
+        self,
+        user_id: str,
+        focus_destination: Optional[str] = None,
+        limit: int = 10,
+        seeker_footprint: Optional[List[str]] = None,
+    ) -> List[TravelerMatch]:
+        """Ranks ingested users by profile fit plus overlap of travel footprint / plan focus.
+
+        ``focus_destination`` is the active trip destination (e.g. selected plan city): it
+        boosts candidates who have that place in ``travel_footprint`` or ``location`` but
+        does **not** exclude others (no exact location filter).
 
         Args:
             user_id: Seeker; excluded from results.
-            location: If set, requires exact ``location`` string match.
+            focus_destination: Optional plan destination label for scoring.
             limit: Max buddies to return.
+            seeker_footprint: Extra destinations from seeker's past/future plans (normalized internally).
 
         Returns:
             Sorted ``TravelerMatch`` list, possibly empty if profile missing or on error.
@@ -356,38 +428,49 @@ class MatchingService:
             if not user_profile:
                 return []
             
+            seeker_dests = _seeker_destinations(user_profile, focus_destination, seeker_footprint)
+            
             # Get all potential matches
             all_users = self._get_all_users()
             
             # Calculate compatibility scores
             recommendations = []
             for user_data in all_users:
-                if user_data['user_id'] == user_id:
+                if str(user_data.get("user_id")) == str(user_id):
                     continue
                 
-                # Apply location filter if specified
-                if location and user_data.get('location') != location:
-                    continue
+                candidate_dests = _profile_destinations(user_data)
+                overlap_norm = seeker_dests & candidate_dests
                 
-                compatibility = self._calculate_simple_compatibility(
+                base = self._calculate_simple_compatibility(
                     user_profile, 
                     user_data
                 )
+                # Upweight shared destinations / footprint (history + current plan focus)
+                overlap_boost = min(0.32, 0.11 * len(overlap_norm))
+                compatibility = min(1.0, base + overlap_boost)
+                
                 common_preferences = self._get_common_preferences(
                     user_profile.get('preferences', []),
                     user_data.get('preferences', []),
                 )
+                shared_destinations = _shared_destination_labels(user_data, overlap_norm)
                 
-                if compatibility >= settings.MIN_COMPATIBILITY_SCORE:
+                min_score = settings.MIN_COMPATIBILITY_SCORE
+                if len(overlap_norm) >= 1:
+                    min_score = min(min_score, 0.48)
+                
+                if compatibility >= min_score:
                     match = TravelerMatch(
-                        user_id=user_data['user_id'],
+                        user_id=str(user_data['user_id']),
                         name=user_data['name'],
                         age=user_data.get('age'),
                         compatibility_score=compatibility,
                         common_preferences=common_preferences,
                         travel_style_match=compatibility,
                         bio=user_data.get('bio'),
-                        profile_image=user_data.get('profile_image')
+                        profile_image=user_data.get('profile_image'),
+                        shared_destinations=shared_destinations,
                     )
                     recommendations.append(match)
             

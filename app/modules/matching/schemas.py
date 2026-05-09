@@ -38,6 +38,7 @@ class TravelerMatch(BaseModel):
     bio: Optional[str] = None
     profile_image: Optional[str] = None
     dimension_summary: Optional[Dict[str, float]] = None
+    shared_destinations: List[str] = Field(default_factory=list)
 
 
 class MatchingResponse(BaseModel):
@@ -79,6 +80,7 @@ class MatchingProfile(BaseModel):
     personality_tags: List[str] = Field(default_factory=list)
     bio: Optional[str] = None
     profile_image: Optional[str] = None
+    travel_footprint: List[str] = Field(default_factory=list)
 
 
 class MatchingProfilesIngestRequest(BaseModel):
