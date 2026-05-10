@@ -96,6 +96,52 @@ install_docker() {
   command -v docker >/dev/null 2>&1 || die "CLI de Docker no disponible tras la instalación."
 }
 
+# Instala el plugin Compose v2 de Docker. En Amazon Linux 2 el paquete `docker`
+# del repo oficial NO incluye el plugin (solo buildx), por lo que `docker compose`
+# falla con "unknown shorthand flag: 'f'". En AL2023 / Ubuntu hay paquetes nativos
+# (docker-compose-plugin) pero como fallback descargamos el binario oficial del
+# repo de GitHub y lo dejamos en /usr/libexec/docker/cli-plugins (system-wide).
+install_docker_compose_plugin() {
+  if docker compose version >/dev/null 2>&1; then
+    log "Plugin docker compose ya disponible: $(docker compose version --short 2>/dev/null || echo present)"
+    return 0
+  fi
+
+  log "Plugin 'docker compose' no encontrado. Instalando..."
+  local os
+  os="$(detect_os)"
+  # Intento 1: paquete nativo donde exista.
+  case "$os" in
+    amzn\ 2023*|fedora*|rocky*|almalinux*)
+      dnf install -y docker-compose-plugin >/dev/null 2>&1 || true
+      ;;
+    ubuntu*|debian*)
+      apt-get install -y docker-compose-plugin >/dev/null 2>&1 || true
+      ;;
+  esac
+
+  if docker compose version >/dev/null 2>&1; then
+    log "Plugin docker compose instalado vía gestor de paquetes."
+    return 0
+  fi
+
+  # Intento 2: binario oficial de github.com/docker/compose como CLI plugin.
+  local plugin_dir="/usr/libexec/docker/cli-plugins"
+  local arch
+  arch="$(uname -m)"
+  install -d -m 0755 "$plugin_dir"
+  log "Descargando docker-compose-linux-${arch} desde github.com/docker/compose..."
+  curl -fSL \
+    "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${arch}" \
+    -o "$plugin_dir/docker-compose" \
+    || die "No se pudo descargar el plugin docker compose."
+  chmod 0755 "$plugin_dir/docker-compose"
+
+  docker compose version >/dev/null 2>&1 \
+    || die "Plugin docker compose instalado pero 'docker compose version' sigue fallando."
+  log "Plugin docker compose listo: $(docker compose version --short 2>/dev/null || echo present)"
+}
+
 install_psql_client() {
   if command -v psql >/dev/null 2>&1; then
     return 0
@@ -429,6 +475,7 @@ main() {
   assert_environment_ready
 
   install_docker
+  install_docker_compose_plugin
   install_psql_client
 
   # Si DB_SSLMODE/DATABASE_URL pide verify-*, baja el bundle y deja PGSSLROOTCERT
