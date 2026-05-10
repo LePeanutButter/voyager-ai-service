@@ -1,0 +1,30 @@
+# Dev/CI-only dependencies. NO se instalan en la imagen Docker de producción.
+# El CI hace `pip install -r requirements.txt -r requirements-dev.txt` para los
+# jobs de Sonar y de tests. La imagen Docker solo ve requirements.txt.
+
+-r requirements.txt
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+coverage>=7.4
+
+# Linters / formatters
+black>=26.3.1,<27
+isort==5.12.0
+flake8==6.1.0
+mypy==1.7.1
+
+# Migrations (solo si se generan revisiones de schema; la app crea tablas con
+# Base.metadata.create_all al arranque, así que no es runtime).
+alembic==1.13.1
+
+# Docs (CI/local)
+mkdocs==1.5.3
+mkdocs-material==9.4.8
+
+# Notebooks (local exploración; no necesarios en CI estricto, pero algunos
+# usuarios los ejecutan junto a los tests).
+jupyter==1.0.0
+ipython==8.17.2

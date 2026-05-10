@@ -250,7 +250,6 @@ pyvenv.cfg
 poetry.lock
 
 # pip-tools
-requirements-dev.txt
 requirements-test.txt
 
 # Jupyter
