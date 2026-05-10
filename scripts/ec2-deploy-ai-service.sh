@@ -117,6 +117,25 @@ install_psql_client() {
 
 load_environment() {
   mkdir -p "$INSTALL_ROOT"
+
+  # Si no existe en INSTALL_ROOT, intenta copiarlo desde el directorio del script
+  # (caso del artefacto de GitHub Actions: release/environment + scripts/ec2-deploy-ai-service.sh).
+  if [[ ! -f "$ENV_FILE" ]]; then
+    local candidate=""
+    if [[ -f "$SCRIPT_DIR/environment" ]]; then
+      candidate="$SCRIPT_DIR/environment"
+    elif [[ -f "$SCRIPT_DIR/../release/environment" ]]; then
+      candidate="$SCRIPT_DIR/../release/environment"
+    elif [[ -f "$SCRIPT_DIR/release/environment" ]]; then
+      candidate="$SCRIPT_DIR/release/environment"
+    fi
+    if [[ -n "$candidate" ]]; then
+      log "Copiando archivo de entorno desde $candidate a $ENV_FILE"
+      cp "$candidate" "$ENV_FILE"
+      chmod 0600 "$ENV_FILE"
+    fi
+  fi
+
   if [[ -f "$ENV_FILE" ]]; then
     log "Cargando $ENV_FILE"
     set +u
@@ -124,6 +143,54 @@ load_environment() {
     set -a && source "$ENV_FILE" && set +a
     set -u
   fi
+}
+
+# Descarga el bundle de certificados RDS si no está presente. Devuelve la ruta absoluta.
+# Necesario cuando DB_SSLMODE=verify-full|verify-ca (psycopg2/libpq y psql lo requieren).
+download_rds_cert() {
+  local cert_file="$INSTALL_ROOT/global-bundle.pem"
+  if [[ ! -f "$cert_file" ]]; then
+    log "Descargando certificado SSL de AWS RDS..."
+    curl -fsSL -o "$cert_file" https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+      || die "No se pudo descargar el certificado RDS."
+    chmod 644 "$cert_file"
+  fi
+  printf "%s" "$cert_file"
+}
+
+# Cuando DB_SSLMODE (o el sslmode dentro de DATABASE_URL) exige validación de CA,
+# psycopg2/libpq buscan el cert raíz en ~/.postgresql/root.crt, que no existe en
+# el contenedor (`/home/appuser/.postgresql/root.crt`). Para evitar el error
+# `Could not open SSL root certificate file ...`, exportamos PGSSLROOTCERT
+# apuntando a la ruta donde el unit systemd monta el bundle dentro del contenedor.
+ensure_db_ssl_compatibility() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  local container_cert="/etc/ssl/certs/global-bundle.pem"
+  local needs_ca=0
+  if [[ "${DB_SSLMODE:-}" =~ ^verify-(full|ca)$ ]]; then
+    needs_ca=1
+  fi
+  if [[ -n "${DATABASE_URL:-}" && "$DATABASE_URL" =~ sslmode=verify-(full|ca) ]]; then
+    needs_ca=1
+  fi
+  [[ "$needs_ca" -eq 1 ]] || return 0
+
+  if [[ "${PGSSLROOTCERT:-}" == "$container_cert" ]] && grep -q "^PGSSLROOTCERT=$container_cert$" "$ENV_FILE"; then
+    return 0
+  fi
+
+  log "DB_SSLMODE/DATABASE_URL exige verify-* sin sslrootcert; inyectando PGSSLROOTCERT=$container_cert en $ENV_FILE"
+  local tmp
+  tmp="$(mktemp)"
+  awk -v new="PGSSLROOTCERT=${container_cert}" '
+    BEGIN { replaced = 0 }
+    /^PGSSLROOTCERT=/ { print new; replaced = 1; next }
+    { print }
+    END { if (!replaced) print new }
+  ' "$ENV_FILE" >"$tmp"
+  install -m 0600 "$tmp" "$ENV_FILE"
+  rm -f "$tmp"
+  export PGSSLROOTCERT="$container_cert"
 }
 
 resolve_image_tar() {
@@ -157,32 +224,48 @@ ensure_database_exists() {
   local port="${DB_PORT:-5432}"
   local dbname="${DB_NAME:-tourism_ai}"
   local admin_db="${DB_ADMIN_DATABASE:-postgres}"
-  export PGPASSWORD="$DB_PASSWORD"
-  export PGSSLMODE="${PGSSLMODE:-require}"
 
-  log "Comprobando base de datos '$dbname' en $DB_HOST:$port ..."
+  # Determina el modo SSL para psql en el bootstrap. Prioridad:
+  #   PGSSLMODE explícito > DB_SSLMODE del env file > "require" por defecto.
+  local sslmode="${PGSSLMODE:-${DB_SSLMODE:-require}}"
+  local cert_file=""
+  local conn_str
+
+  export PGPASSWORD="$DB_PASSWORD"
+  if [[ "$sslmode" =~ ^verify-(full|ca)$ ]]; then
+    cert_file="$(download_rds_cert)"
+    export PGSSLMODE="$sslmode"
+    export PGSSLROOTCERT="$cert_file"
+    conn_str="host=$DB_HOST port=$port user=$DB_USERNAME dbname=$admin_db sslmode=$sslmode sslrootcert=$cert_file"
+    log "Comprobando base '$dbname' en $DB_HOST:$port con SSL ($sslmode + sslrootcert)..."
+  else
+    export PGSSLMODE="$sslmode"
+    conn_str="host=$DB_HOST port=$port user=$DB_USERNAME dbname=$admin_db sslmode=$sslmode"
+    log "Comprobando base '$dbname' en $DB_HOST:$port (sslmode=$sslmode)..."
+  fi
+
   local exists
-  exists="$(psql -h "$DB_HOST" -p "$port" -U "$DB_USERNAME" -d "$admin_db" -tAc \
+  exists="$(psql "$conn_str" -tAc \
     "SELECT 1 FROM pg_database WHERE datname = '$dbname'" || true)"
   if [[ "$(echo "$exists" | tr -d '[:space:]')" == "1" ]]; then
     log "La base '$dbname' ya existe."
-    return 0
+  else
+    log "Creando base '$dbname' (la app crea sus tablas en el primer arranque)."
+    psql "$conn_str" -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$dbname\";"
   fi
-  log "Creando base '$dbname' (Alembic/migraciones se aplican aparte si aplica)."
-  psql -h "$DB_HOST" -p "$port" -U "$DB_USERNAME" -d "$admin_db" -v ON_ERROR_STOP=1 \
-    -c "CREATE DATABASE \"$dbname\";"
-  unset PGPASSWORD
+  unset PGPASSWORD PGSSLMODE PGSSLROOTCERT
 }
 
 write_systemd_unit() {
-  local image_ref="${VOYAGER_AI_IMAGE:-voyager-ai-service:latest}"
   local compose_file="$INSTALL_ROOT/docker-compose.yml"
-  
-  # Crear docker-compose.yml si no existe
-  if [[ ! -f "$compose_file" ]]; then
-    log "Creando docker-compose.yml para producción..."
-    cat >"$compose_file" <<'EOF'
+  local cert_file="$INSTALL_ROOT/global-bundle.pem"
+
+  log "Regenerando docker-compose.yml para producción..."
+  # Regeneramos siempre el compose para reflejar mejoras del script (p. ej. monte del cert RDS).
+  cat >"$compose_file" <<EOF
 # Stack listo para EC2: Ollama en un contenedor y el microservicio FastAPI en otro.
+# El cert RDS se monta en /etc/ssl/certs/global-bundle.pem para que psycopg2 lo
+# encuentre cuando DB_SSLMODE=verify-full|verify-ca (lo apunta PGSSLROOTCERT en el env_file).
 services:
   ollama:
     image: ollama/ollama:latest
@@ -199,18 +282,19 @@ services:
       start_period: 20s
 
   ai:
-    image: ${VOYAGER_AI_IMAGE:-voyager-ai-service:latest}
+    image: \${VOYAGER_AI_IMAGE:-voyager-ai-service:latest}
     restart: unless-stopped
     depends_on:
       ollama:
         condition: service_healthy
     ports:
-      - "${AI_HOST_PORT:-8000}:8000"
+      - "\${AI_HOST_PORT:-8000}:8000"
     env_file:
-      - ${VOYAGER_AI_ENV_FILE:-$INSTALL_ROOT/environment}
+      - $ENV_FILE
     volumes:
       - ai_service_data:/app/data
       - ai_ml_models:/app/app/ml/models
+      - $cert_file:/etc/ssl/certs/global-bundle.pem:ro
     networks:
       - ai_net
 
@@ -223,7 +307,6 @@ networks:
   ai_net:
     driver: bridge
 EOF
-  fi
 
   local unit="/etc/systemd/system/${SERVICE_NAME}.service"
   log "Creando servicio systemd para docker-compose..."
@@ -240,8 +323,9 @@ TimeoutStartSec=0
 Restart=always
 RestartSec=15
 WorkingDirectory=$INSTALL_ROOT
+EnvironmentFile=$ENV_FILE
 ExecStartPre=-/usr/bin/docker compose -f $compose_file down
-ExecStart=/usr/bin/docker compose -f $compose_file up --build
+ExecStart=/usr/bin/docker compose -f $compose_file up
 ExecStop=/usr/bin/docker compose -f $compose_file down
 
 [Install]
@@ -253,15 +337,21 @@ create_template_environment() {
   log "Creando plantilla en $ENV_FILE — edita valores reales y vuelve a ejecutar."
   install -d -m 0755 "$INSTALL_ROOT"
   cat >"$ENV_FILE" <<'EOF'
-# Database configuration
+# Database configuration (RDS PostgreSQL)
+# DATABASE_URL es opcional: si lo dejas vacío, la app construye la URL desde DB_*.
 DATABASE_URL=
 DB_HOST=your-ai-rds.region.rds.amazonaws.com
 DB_PORT=5432
-DB_NAME=tourism_ai
+DB_NAME=smarttrip-ai
 DB_USERNAME=smarttrip_user
 DB_PASSWORD=your_password
-DB_SSLMODE=require
-PGSSLMODE=require
+# Opciones: require | verify-ca | verify-full (recomendado para RDS).
+# Si usas verify-*, el script descarga el bundle RDS y exporta PGSSLROOTCERT.
+DB_SSLMODE=verify-full
+PGSSLMODE=verify-full
+# Ruta DENTRO del contenedor donde el compose monta el bundle. No editar a menos
+# que cambies también el volume del compose.
+PGSSLROOTCERT=/etc/ssl/certs/global-bundle.pem
 
 # AI/ML Configuration (automáticas con Ollama en misma EC2)
 OLLAMA_URL=http://ollama:11434
@@ -308,6 +398,11 @@ main() {
 
   install_docker
   install_psql_client
+
+  # Si DB_SSLMODE/DATABASE_URL pide verify-*, baja el bundle y deja PGSSLROOTCERT
+  # en el env file para que psycopg2 dentro del contenedor lo use al conectar.
+  download_rds_cert >/dev/null
+  ensure_db_ssl_compatibility
 
   ensure_database_exists
 
