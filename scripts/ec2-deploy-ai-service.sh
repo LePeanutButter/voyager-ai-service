@@ -176,18 +176,60 @@ ensure_database_exists() {
 
 write_systemd_unit() {
   local image_ref="${VOYAGER_AI_IMAGE:-voyager-ai-service:latest}"
-  local models_host="${VOYAGER_AI_MODELS_HOST_DIR:-$INSTALL_ROOT/ml-models}"
-  local has_models=0
-  if [[ -d "$models_host" ]] && find "$models_host" -type f -print -quit | grep -q .; then
-    has_models=1
+  local compose_file="$INSTALL_ROOT/docker-compose.yml"
+  
+  # Crear docker-compose.yml si no existe
+  if [[ ! -f "$compose_file" ]]; then
+    log "Creando docker-compose.yml para producción..."
+    cat >"$compose_file" <<'EOF'
+# Stack listo para EC2: Ollama en un contenedor y el microservicio FastAPI en otro.
+services:
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - ai_net
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  ai:
+    image: ${VOYAGER_AI_IMAGE:-voyager-ai-service:latest}
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    ports:
+      - "${AI_HOST_PORT:-8000}:8000"
+    env_file:
+      - ${VOYAGER_AI_ENV_FILE:-$INSTALL_ROOT/environment}
+    volumes:
+      - ai_service_data:/app/data
+      - ai_ml_models:/app/app/ml/models
+    networks:
+      - ai_net
+
+volumes:
+  ollama_data:
+  ai_service_data:
+  ai_ml_models:
+
+networks:
+  ai_net:
+    driver: bridge
+EOF
   fi
 
   local unit="/etc/systemd/system/${SERVICE_NAME}.service"
-  if [[ "$has_models" -eq 1 ]]; then
-    log "Montando modelos locales: $models_host -> /app/app/ml/models (ro)"
-    cat >"$unit" <<EOF
+  log "Creando servicio systemd para docker-compose..."
+  cat >"$unit" <<EOF
 [Unit]
-Description=Voyager AI service (FastAPI / Docker)
+Description=Voyager AI Stack (Ollama + FastAPI)
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
@@ -198,61 +240,45 @@ TimeoutStartSec=0
 Restart=always
 RestartSec=15
 WorkingDirectory=$INSTALL_ROOT
-ExecStartPre=-/usr/bin/docker stop $CONTAINER_NAME
-ExecStartPre=-/usr/bin/docker rm $CONTAINER_NAME
-ExecStart=/usr/bin/docker run --name $CONTAINER_NAME \\
-  --env-file $ENV_FILE \\
-  -v $models_host:/app/app/ml/models:ro \\
-  -p 0.0.0.0:8000:8000 \\
-  $image_ref
-ExecStop=/usr/bin/docker stop $CONTAINER_NAME
-ExecStopPost=-/usr/bin/docker rm $CONTAINER_NAME
+ExecStartPre=-/usr/bin/docker compose -f $compose_file down
+ExecStart=/usr/bin/docker compose -f $compose_file up --build
+ExecStop=/usr/bin/docker compose -f $compose_file down
 
 [Install]
 WantedBy=multi-user.target
 EOF
-  else
-    log "Sin ficheros en $models_host: el contenedor usará lo que venga en la imagen Docker (directorio models del build)."
-    cat >"$unit" <<EOF
-[Unit]
-Description=Voyager AI service (FastAPI / Docker)
-After=docker.service network-online.target
-Requires=docker.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-TimeoutStartSec=0
-Restart=always
-RestartSec=15
-WorkingDirectory=$INSTALL_ROOT
-ExecStartPre=-/usr/bin/docker stop $CONTAINER_NAME
-ExecStartPre=-/usr/bin/docker rm $CONTAINER_NAME
-ExecStart=/usr/bin/docker run --name $CONTAINER_NAME \\
-  --env-file $ENV_FILE \\
-  -p 0.0.0.0:8000:8000 \\
-  $image_ref
-ExecStop=/usr/bin/docker stop $CONTAINER_NAME
-ExecStopPost=-/usr/bin/docker rm $CONTAINER_NAME
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  fi
 }
 
 create_template_environment() {
   log "Creando plantilla en $ENV_FILE — edita valores reales y vuelve a ejecutar."
   install -d -m 0755 "$INSTALL_ROOT"
   cat >"$ENV_FILE" <<'EOF'
-VOYAGER_AI_IMAGE=voyager-ai-service:latest
+# Database configuration
+DATABASE_URL=
 DB_HOST=your-ai-rds.region.rds.amazonaws.com
 DB_PORT=5432
 DB_NAME=tourism_ai
 DB_USERNAME=smarttrip_user
 DB_PASSWORD=your_password
-PGSSLMODE=require
 DB_SSLMODE=require
+PGSSLMODE=require
+
+# AI/ML Configuration (automáticas con Ollama en misma EC2)
+OLLAMA_URL=http://ollama:11434
+LOCAL_MODEL_NAME=mistral:7b-instruct
+OLLAMA_HTTP_TIMEOUT_SECONDS=300
+OLLAMA_PULL_ON_START=1
+LOCAL_EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+
+# Service Configuration
+ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
+
+# Fixed values (no secrets)
+AI_HOST_PORT=8000
+CORS_ALLOW_EC2_COMPUTE_DNS=false
+LOG_LEVEL=INFO
+VOYAGER_AI_IMAGE=voyager-ai-service:latest
+VOYAGER_AI_ENV_FILE=$INSTALL_ROOT/environment
 EOF
   chmod 0600 "$ENV_FILE"
 }
@@ -284,7 +310,6 @@ main() {
   install_psql_client
 
   ensure_database_exists
-  install -d -m 0755 "${VOYAGER_AI_MODELS_HOST_DIR:-$INSTALL_ROOT/ml-models}"
 
   load_image_if_needed
   assert_image_present
@@ -293,7 +318,7 @@ main() {
   systemctl daemon-reload
   systemctl enable "$SERVICE_NAME"
   systemctl restart "$SERVICE_NAME"
-  log "Servicio $SERVICE_NAME iniciado. Revisa: systemctl status $SERVICE_NAME | docker logs -f $CONTAINER_NAME"
+  log "Stack $SERVICE_NAME iniciado (Ollama + IA). Revisa: systemctl status $SERVICE_NAME | docker compose -f $INSTALL_ROOT/docker-compose.yml logs -f"
 }
 
 main "$@"

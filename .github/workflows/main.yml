@@ -139,28 +139,7 @@ jobs:
             echo "No tests directory found, skipping tests."
           fi
 
-      - name: Package API (sin pesos en app/ml/models)
-        run: |
-          mkdir -p release
-          STAGE=$(mktemp -d)
-          cp -r app "${STAGE}/"
-          rm -rf "${STAGE}/app/ml/models"
-          mkdir -p "${STAGE}/app/ml/models"
-          cp requirements.txt Dockerfile "${STAGE}/"
-          tar -czf release/ai-service-api.tar.gz -C "${STAGE}" .
-          rm -rf "${STAGE}"
-
-      - name: Package ML models bundle
-        run: |
-          mkdir -p release
-          if [ -d app/ml/models ] && [ -n "$(find app/ml/models -type f 2>/dev/null | head -1)" ]; then
-            tar -czf release/ml-models.tar.gz -C app/ml models
-          else
-            mkdir -p release/ml-models-placeholder
-            printf '%s\n' '{"note":"Sin binarios en repo; usar artefactos de entrenamiento o el bundle ml-models del CI en EC2."}' > release/ml-models-placeholder/manifest.json
-            tar -czf release/ml-models.tar.gz -C release ml-models-placeholder
-          fi
-
+      
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -172,47 +151,23 @@ jobs:
       - name: Save image for Learner Lab (docker load en EC2)
         run: docker save voyager-ai-service:latest -o release/voyager-ai-service-image.tar
 
-      - name: Upload API artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ai-service-api
-          path: release/ai-service-api.tar.gz
-
-      - name: Upload ML bundle artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ai-service-ml-models
-          path: release/ml-models.tar.gz
-
       - name: Upload Docker image artifact
         uses: actions/upload-artifact@v4
         with:
           name: ai-service-docker-image
           path: release/voyager-ai-service-image.tar
 
-  deploy_manual:
+  deploy_ec2:
     if: github.event_name == 'push'
-    name: Manual Deploy Handoff (Learner Lab)
+    name: Deploy to EC2 (Learner Lab)
     needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Make deploy scripts executable
-        run: chmod +x scripts/deploy-ai-service-manual.sh scripts/ec2-deploy-ai-service.sh
-
-      - name: Download API artifact (opcional: despliegue sin Docker)
-        uses: actions/download-artifact@v4
-        with:
-          name: ai-service-api
-          path: release
-
-      - name: Download ML models artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ai-service-ml-models
-          path: release
+      - name: Make deploy script executable
+        run: chmod +x scripts/ec2-deploy-ai-service.sh
 
       - name: Download Docker image artifact
         uses: actions/download-artifact@v4
@@ -220,13 +175,39 @@ jobs:
           name: ai-service-docker-image
           path: release
 
-      - name: Publish manual deployment package
+      - name: Create environment file from GitHub Secrets
+        run: |
+          cat > release/environment << EOF
+          # Database configuration
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_PORT=${{ secrets.DB_PORT }}
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_USERNAME=${{ secrets.DB_USERNAME }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_SSLMODE=${{ secrets.DB_SSLMODE }}
+          
+          # AI/ML Configuration (automáticas con Ollama en misma EC2)
+          OLLAMA_URL=http://ollama:11434
+          LOCAL_MODEL_NAME=mistral:7b-instruct
+          OLLAMA_HTTP_TIMEOUT_SECONDS=300
+          OLLAMA_PULL_ON_START=1
+          
+          # Service Configuration
+          ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}
+          
+          # Fixed values (no secrets)
+          AI_HOST_PORT=8000
+          CORS_ALLOW_EC2_COMPUTE_DNS=false
+          LOG_LEVEL=INFO
+          VOYAGER_AI_IMAGE=voyager-ai-service:latest
+          EOF
+
+      - name: Publish deployment package
         uses: actions/upload-artifact@v4
         with:
-          name: ai-service-production-manual-deploy
+          name: ai-service-ec2-deploy
           path: |
-            release/ai-service-api.tar.gz
-            release/ml-models.tar.gz
             release/voyager-ai-service-image.tar
-            scripts/deploy-ai-service-manual.sh
+            release/environment
             scripts/ec2-deploy-ai-service.sh
