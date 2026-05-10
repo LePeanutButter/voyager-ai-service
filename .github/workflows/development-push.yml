@@ -1,7 +1,8 @@
 # ===========================================
 # CI — AI Service (push a development)
 # - Trivy + SonarCloud (ORGANIZATION_KEY, PROJECT_KEY, SONAR_TOKEN)
-# - Artefactos: API tar, ml-models.tar.gz, imagen Docker (voyager-ai-service-image.tar)
+# - Build optimizado: requirements split (runtime vs dev), torch CPU-only,
+#   buildx GHA cache, artefacto comprimido (.tar.gz).
 # ===========================================
 
 name: CI Build & Deploy (AI Service - Development Push)
@@ -53,12 +54,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
-      - name: Install dependencies
+      - name: Install dependencies (runtime + dev)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest coverage
+          pip install -r requirements-dev.txt
 
       - name: Run tests with coverage for Sonar
         run: |
@@ -101,12 +105,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
-      - name: Install dependencies
+      - name: Install dev dependencies (testing)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
+          pip install -r requirements-dev.txt
 
       - name: Run unit tests
         run: |
@@ -116,24 +123,33 @@ jobs:
             echo "No tests directory found, skipping tests."
           fi
 
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image (FastAPI)
+      # Build con caché de BuildKit en el caché de Actions. La primera build de
+      # development no la aprovecha; las siguientes saltan ~5–7 min.
+      - name: Build Docker image (FastAPI, runtime slim)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: voyager-ai-service:latest
+          cache-from: type=gha,scope=ai-service-development
+          cache-to: type=gha,mode=max,scope=ai-service-development
+
+      - name: Save & compress image for Learner Lab
         run: |
           mkdir -p release
-          docker build -t voyager-ai-service:latest .
-
-      - name: Save image for Learner Lab
-        run: docker save voyager-ai-service:latest -o release/voyager-ai-service-image.tar
-
+          # docker save | gzip reduce ~50% el tamaño del artefacto.
+          docker save voyager-ai-service:latest | gzip -9 > release/voyager-ai-service-image.tar.gz
+          ls -lh release/voyager-ai-service-image.tar.gz
 
       - name: Upload Docker image artifact
         uses: actions/upload-artifact@v4
         with:
           name: ai-service-docker-image
-          path: release/voyager-ai-service-image.tar
+          path: release/voyager-ai-service-image.tar.gz
 
   deploy_ec2:
     if: github.event_name == 'push'
@@ -153,10 +169,10 @@ jobs:
           name: ai-service-docker-image
           path: release
 
-      - name: Create environment file from GitHub Secrets
+      - name: Generate environment file
         run: |
-          cat > release/environment << EOF
-          # Database configuration
+          cat > environment << EOF
+          # Database configuration (RDS PostgreSQL)
           DATABASE_URL=${{ secrets.DATABASE_URL }}
           DB_HOST=${{ secrets.DB_HOST }}
           DB_PORT=${{ secrets.DB_PORT }}
@@ -164,28 +180,32 @@ jobs:
           DB_USERNAME=${{ secrets.DB_USERNAME }}
           DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           DB_SSLMODE=${{ secrets.DB_SSLMODE }}
-          
-          # AI/ML Configuration (automáticas con Ollama en misma EC2)
+          PGSSLMODE=${{ secrets.DB_SSLMODE }}
+
+          # AI/ML — Ollama corre en la misma EC2 vía Docker network "ai_net".
+          # phi3:3.8b ~ 2.3 GB, ~2x más rápido que mistral:7b en CPU sin perder
+          # demasiado en español. Cambia a mistral:7b-instruct si necesitas
+          # más calidad y aceptas el coste de tokens/seg.
           OLLAMA_URL=http://ollama:11434
-          LOCAL_MODEL_NAME=mistral:7b-instruct
+          LOCAL_MODEL_NAME=phi3:3.8b
           OLLAMA_HTTP_TIMEOUT_SECONDS=300
           OLLAMA_PULL_ON_START=1
-          
-          # Service Configuration
+
+          # CORS / service config
           ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}
-          
-          # Fixed values (no secrets)
+
+          # Fixed values
           AI_HOST_PORT=8000
           CORS_ALLOW_EC2_COMPUTE_DNS=false
           LOG_LEVEL=INFO
           VOYAGER_AI_IMAGE=voyager-ai-service:latest
           EOF
 
-      - name: Publish deployment package
+      - name: Upload manual deployment package
         uses: actions/upload-artifact@v4
         with:
           name: ai-service-ec2-deploy
           path: |
-            release/voyager-ai-service-image.tar
-            release/environment
+            release/voyager-ai-service-image.tar.gz
             scripts/ec2-deploy-ai-service.sh
+            environment

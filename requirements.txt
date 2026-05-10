@@ -1,124 +1,35 @@
-# If install fails on Windows with "link.exe not found" or Rust/maturin errors on Python 3.13,
-# either install "Visual Studio Build Tools" (C++ workload) or use Python 3.11 / 3.12 instead.
+# Runtime-only dependencies for the AI microservice container.
+# Dev/test/lint/docs/notebooks viven en requirements-dev.txt y NO se instalan en
+# la imagen de producción. Esto baja el venv de ~3 GB a ~900 MB.
+#
+# Notas:
+# - torch se instala en variante CPU-only desde el índice de PyTorch (ver Dockerfile).
+#   No fijar versión aquí: el Dockerfile pasa --extra-index-url y la wheel cp311
+#   correcta (~200 MB en vez de ~800 MB con CUDA).
+# - transformers usa torch para LocalEmbeddingService (lazy-loaded).
+# - psycopg2-binary trae libpq estático, sin necesidad de libpq-dev en el host.
 
-# FastAPI and ASGI server
-# On Python 3.13, use versions whose dependencies ship cp313 wheels (pydantic-core)
-# or pip will try to compile Rust / C++ (needs MSVC Build Tools).
+# Web framework
 fastapi>=0.115.6,<1
 uvicorn[standard]>=0.32.0,<1
 
-# Data validation and serialization
+# Data validation
 pydantic>=2.11.0,<3
 pydantic-settings>=2.8.0,<3
 
-# Database and ORM (PostgreSQL local/RDS + SQLite)
+# Database (PostgreSQL/RDS + SQLite local)
 sqlalchemy==2.0.23
-alembic==1.13.1
 psycopg2-binary>=2.9.9,<3
 
-# HTTP client and async utilities
+# HTTP client (Ollama + LLM compatibles)
 httpx==0.25.2
-# aiohttp 3.9.x has no cp313 wheels — pip builds from source on Python 3.13.
-aiohttp>=3.10.10,<4
 
-# NumPy — use a release with pre-built wheels for Python 3.12+ on Windows
-# (avoids building from source, which needs Visual Studio Build Tools / GCC).
+# ML baseline (entrenamiento de pickles al build y/o entrypoint)
 numpy>=2.1.0,<3
-
-# LLM integration (optional — only needed when LLM_PROVIDER != "none")
-# openai>=1.10.0
-# tiktoken>=0.5.0
-
-# Caching (optional at runtime; not imported by default app paths)
-redis==5.0.1
-aioredis==2.0.1
-
-# Authentication and security
-# python-jose>=3.4.0: CVE-2024-33663 (algorithm confusion)
-python-jose[cryptography]>=3.4.0,<4
-passlib[bcrypt]==1.7.4
-# python-multipart>=0.0.22: CVE-2024-24762, CVE-2024-53981, CVE-2026-24486
-python-multipart>=0.0.22,<1
-
-# Configuration management
-python-dotenv==1.0.0
-
-# Logging and monitoring
-structlog==23.2.0
-prometheus-client==0.19.0
-
-# Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-pytest-cov==4.1.0
-
-# Development tools
-# black>=26.3.1: CVE-2026-32274 (unsanitized cache paths)
-black>=26.3.1,<27
-isort==5.12.0
-flake8==6.1.0
-mypy==1.7.1
-
-# Documentation
-mkdocs==1.5.3
-mkdocs-material==9.4.8
-
-# Additional utilities
-typer==0.9.0
-rich==13.7.0
-click==8.1.7
-
-# Image processing (Pillow <10.4 has no Python 3.13 wheels on Windows)
-pillow>=11.0.0,<12
-
-# Date and time utilities
-python-dateutil==2.8.2
-pytz==2023.3
-
-# JSON processing (use a release with cp313 wheels when on Python 3.13)
-orjson>=3.10.0,<4
-
-# Rate limiting
-slowapi==0.1.9
-
-# API documentation / auth helpers (15.x aligns with python-multipart>=0.0.22; 12.x pinned multipart==0.0.6)
-fastapi-users>=15.0.5,<16
-
-# Background task processing
-celery==5.3.4
-kombu==5.3.4
-
-# Email notifications
-aiosmtplib==3.0.1
-jinja2==3.1.2
-
-# File storage (for images and documents)
-aiofiles==23.2.1
-
-# Monitoring and analytics
-sentry-sdk==1.38.0
-
-# ------------------------------------------------------------------------------
-# Data science / ML / notebooks (heavier stack)
-# On Windows you may need Visual Studio Build Tools; some versions lack cp313 wheels.
-# ------------------------------------------------------------------------------
-# pandas 2.2.3+ ships cp312/cp313 wheels; geopandas>=1.1.2 requires pandas>=2.0
-pandas>=2.2.3,<3
-# 1.5.2+ provides cp313 wheels (older pins force a local C++ build on Windows/py313)
 scikit-learn>=1.5.2,<2
-scipy>=1.11.4,<2
-geopy==2.4.1
-# geopandas>=1.1.2: CVE-2025-69662 (SQL injection in read_postgis path)
-geopandas>=1.1.2,<2
 
-# transformers>=4.48.0: CVE-2024-11392/11393/11394 (unsafe deserialization)
-transformers>=4.48.0,<5
-# torch>=2.6.0: CVE-2025-32434 (CRITICAL), CVE-2024-31580/31583
+# Embeddings locales (lazy en LocalEmbeddingService — fallan grácil si faltan).
+# transformers>=4.48.0: CVE-2024-11392/11393/11394.
+# torch>=2.6.0: CVE-2025-32434, CVE-2024-31580/31583. Variante CPU vía Dockerfile.
 torch>=2.6.0,<3
-# nltk>=3.9.3: CVE-2025-14009, CVE-2024-39705, CVE-2026-0846 (partial mitigation for other NLTK CVEs)
-nltk>=3.9.3,<4
-spacy==3.7.2
-huggingface_hub[hf_xet]
-
-jupyter==1.0.0
-ipython==8.17.2
+transformers>=4.48.0,<5

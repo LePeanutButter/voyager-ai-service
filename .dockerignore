@@ -1,20 +1,70 @@
+# Ignora todo lo que no necesita la imagen de runtime. Cada MB que NO se manda
+# al daemon Docker acelera `docker build` y reduce capas innecesarias.
+
+# VCS / metadata
 .git
 .gitignore
-.venv
-venv
-__pycache__
+.gitattributes
+.github
+
+# Editores / IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Python build / cachés / venvs
+__pycache__/
 *.pyc
-.pytest_cache
-.mypy_cache
-.ruff_cache
-*.egg-info
+*.pyo
+*.pyd
+.venv
+venv/
+env/
+ENV/
+*.egg-info/
+build/
+dist/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.benchmarks
+
+# Tests / docs / notebooks
+tests/
+docs/
+*.ipynb
+.jupyter
+notebooks/
+
+# Datos locales / logs / artefactos viejos
+data/*.db
+data/*.sqlite*
+logs/
+*.log
+release/
+ml-models/
+models/*.pkl
+*.tar
+*.tar.gz
+
+# Variables de entorno (nunca a la imagen)
 .env
 .env.*
 !.env.example
-data/*.db
-logs
-*.log
-.coverage
-htmlcov
-tests
-.pytest_cache
+
+# Docker / scripts de despliegue (entran por COPY explícito si hace falta)
+docker-compose*.yml
+scripts/
+Dockerfile*
+.dockerignore
+
+# Configuración local de herramientas que no afecta runtime
+.pre-commit-config.yaml
+sonar-project.properties

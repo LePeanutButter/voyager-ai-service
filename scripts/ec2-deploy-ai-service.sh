@@ -1,30 +1,37 @@
 #!/usr/bin/env bash
 #
 # EC2 manual deploy for AWS Academy Learner Lab (sin registry Docker).
-# Instala Docker si falta, carga la imagen desde el .tar de CI, asegura la base
-# PostgreSQL (RDS o local) y arranca el contenedor FastAPI con systemd.
+# Instala Docker si falta, carga la imagen desde el .tar de CI, garantiza la base
+# PostgreSQL (RDS) con SSL y arranca el stack (Ollama + FastAPI) bajo systemd via
+# docker compose.
 #
-# Uso (como root):
-#   sudo ./ec2-deploy-ai-service.sh [/ruta/voyager-ai-service-image.tar]
+# Layout esperado del artefacto de CI (mismo que voyager-backend-core):
+#   ./environment
+#   ./scripts/ec2-deploy-ai-service.sh
+#   ./release/voyager-ai-service-image.tar
 #
-# Variables en /opt/voyager-ai-service/environment (o VOYAGER_AI_ENV_FILE):
+# Uso (como root, desde el directorio del artefacto):
+#   sudo ./scripts/ec2-deploy-ai-service.sh [/ruta/voyager-ai-service-image.tar]
+#
+# Requeridas en ./environment (o VOYAGER_AI_ENV_FILE):
 #   DB_HOST, DB_USERNAME, DB_PASSWORD — para psql bootstrap (CREATE DATABASE)
-#   DB_PORT, DB_NAME, DB_ADMIN_DATABASE, PGSSLMODE
+#   DB_PORT, DB_NAME, DB_SSLMODE
 #
-# Modelos en la misma instancia:
-#   Artefactos en $INSTALL_ROOT/ml-models/ (p. ej. vía deploy-ai-service-manual.sh).
-#   Se montan en el contenedor como /app/app/ml/models (solo lectura) si hay al menos un fichero.
+# Si DB_SSLMODE=verify-full|verify-ca, el script descarga el bundle RDS a
+# $INSTALL_ROOT/global-bundle.pem, lo monta en el contenedor en
+# /etc/ssl/certs/global-bundle.pem y exporta PGSSLROOTCERT en el env file para
+# que psycopg2 (libpq) lo encuentre.
 #
 # Opcional:
-#   VOYAGER_AI_IMAGE     default voyager-ai-service:latest
-#   VOYAGER_AI_INSTALL_ROOT default /opt/voyager-ai-service
-#   VOYAGER_AI_MODELS_HOST_DIR default $INSTALL_ROOT/ml-models (directorio a montar)
-#   VOYAGER_AI_ENV_FILE  default $INSTALL_ROOT/environment
-#   VOYAGER_AI_SERVICE_NAME systemd, default voyager-ai-service
+#   VOYAGER_AI_IMAGE         default voyager-ai-service:latest
+#   VOYAGER_AI_INSTALL_ROOT  default $(pwd) (mismo enfoque que voyager-backend-core)
+#   VOYAGER_AI_ENV_FILE      default $INSTALL_ROOT/environment
+#   VOYAGER_AI_SERVICE_NAME  systemd, default voyager-ai-service
+#   AI_HOST_PORT             puerto del host expuesto por FastAPI, default 8000
 
 set -euo pipefail
 
-readonly INSTALL_ROOT="${VOYAGER_AI_INSTALL_ROOT:-/opt/voyager-ai-service}"
+readonly INSTALL_ROOT="${VOYAGER_AI_INSTALL_ROOT:-$(pwd)}"
 readonly SERVICE_NAME="${VOYAGER_AI_SERVICE_NAME:-voyager-ai-service}"
 readonly CONTAINER_NAME="${VOYAGER_AI_CONTAINER_NAME:-voyager-ai-service}"
 readonly ENV_FILE="${VOYAGER_AI_ENV_FILE:-$INSTALL_ROOT/environment}"
@@ -118,22 +125,12 @@ install_psql_client() {
 load_environment() {
   mkdir -p "$INSTALL_ROOT"
 
-  # Si no existe en INSTALL_ROOT, intenta copiarlo desde el directorio del script
-  # (caso del artefacto de GitHub Actions: release/environment + scripts/ec2-deploy-ai-service.sh).
-  if [[ ! -f "$ENV_FILE" ]]; then
-    local candidate=""
-    if [[ -f "$SCRIPT_DIR/environment" ]]; then
-      candidate="$SCRIPT_DIR/environment"
-    elif [[ -f "$SCRIPT_DIR/../release/environment" ]]; then
-      candidate="$SCRIPT_DIR/../release/environment"
-    elif [[ -f "$SCRIPT_DIR/release/environment" ]]; then
-      candidate="$SCRIPT_DIR/release/environment"
-    fi
-    if [[ -n "$candidate" ]]; then
-      log "Copiando archivo de entorno desde $candidate a $ENV_FILE"
-      cp "$candidate" "$ENV_FILE"
-      chmod 0600 "$ENV_FILE"
-    fi
+  # Si el env file no está en INSTALL_ROOT, lo copiamos desde el directorio del
+  # script. Esto cubre el flujo "extraer artefacto y ejecutar desde otro path".
+  if [[ ! -f "$ENV_FILE" && -f "$SCRIPT_DIR/environment" ]]; then
+    log "Copiando archivo de entorno desde $SCRIPT_DIR/environment a $ENV_FILE"
+    cp "$SCRIPT_DIR/environment" "$ENV_FILE"
+    chmod 0600 "$ENV_FILE"
   fi
 
   if [[ -f "$ENV_FILE" ]]; then
@@ -195,14 +192,42 @@ ensure_db_ssl_compatibility() {
 
 resolve_image_tar() {
   local tar_path="$IMAGE_TAR_CLI"
-  if [[ -z "$tar_path" ]]; then
-    if [[ -f "$INSTALL_ROOT/voyager-ai-service-image.tar" ]]; then
-      tar_path="$INSTALL_ROOT/voyager-ai-service-image.tar"
-    elif [[ -f "$SCRIPT_DIR/voyager-ai-service-image.tar" ]]; then
-      tar_path="$SCRIPT_DIR/voyager-ai-service-image.tar"
-    fi
+  if [[ -n "$tar_path" ]]; then
+    echo "$tar_path"
+    return
   fi
-  echo "${tar_path:-}"
+  # Acepta .tar y .tar.gz para soportar el artefacto comprimido del CI nuevo
+  # y los .tar antiguos que sigan en disco.
+  local candidates=(
+    "$INSTALL_ROOT/voyager-ai-service-image.tar.gz"
+    "$INSTALL_ROOT/voyager-ai-service-image.tar"
+    "$SCRIPT_DIR/voyager-ai-service-image.tar.gz"
+    "$SCRIPT_DIR/voyager-ai-service-image.tar"
+    "$INSTALL_ROOT/release/voyager-ai-service-image.tar.gz"
+    "$INSTALL_ROOT/release/voyager-ai-service-image.tar"
+    "$SCRIPT_DIR/release/voyager-ai-service-image.tar.gz"
+    "$SCRIPT_DIR/release/voyager-ai-service-image.tar"
+  )
+  local c
+  for c in "${candidates[@]}"; do
+    if [[ -f "$c" ]]; then
+      echo "$c"
+      return
+    fi
+  done
+  # Última opción: busca en cualquiera de los release/ disponibles.
+  local found=""
+  if [[ -d "$INSTALL_ROOT/release" ]]; then
+    found=$(find "$INSTALL_ROOT/release" -maxdepth 2 \
+      \( -name 'voyager-ai-service-image.tar' -o -name 'voyager-ai-service-image.tar.gz' \) \
+      -type f 2>/dev/null | head -1)
+  fi
+  if [[ -z "$found" && -d "$SCRIPT_DIR/release" ]]; then
+    found=$(find "$SCRIPT_DIR/release" -maxdepth 2 \
+      \( -name 'voyager-ai-service-image.tar' -o -name 'voyager-ai-service-image.tar.gz' \) \
+      -type f 2>/dev/null | head -1)
+  fi
+  echo "${found:-}"
 }
 
 load_image_if_needed() {
@@ -210,10 +235,15 @@ load_image_if_needed() {
   tar_path="$(resolve_image_tar)"
   if [[ -n "$tar_path" ]]; then
     [[ -f "$tar_path" ]] || die "No se encontró el tar de imagen: $tar_path"
-    log "docker load -i $tar_path"
-    docker load -i "$tar_path"
+    if [[ "$tar_path" == *.gz || "$tar_path" == *.tgz ]]; then
+      log "Cargando imagen Docker desde (gzip): $tar_path"
+      gunzip -c "$tar_path" | docker load
+    else
+      log "Cargando imagen Docker desde: $tar_path"
+      docker load -i "$tar_path"
+    fi
     install -d -m 0755 "$INSTALL_ROOT"
-    install -m 0644 "$tar_path" "$INSTALL_ROOT/voyager-ai-service-image.tar" 2>/dev/null || true
+    install -m 0644 "$tar_path" "$INSTALL_ROOT/$(basename "$tar_path")" 2>/dev/null || true
   fi
 }
 
@@ -353,9 +383,11 @@ PGSSLMODE=verify-full
 # que cambies también el volume del compose.
 PGSSLROOTCERT=/etc/ssl/certs/global-bundle.pem
 
-# AI/ML Configuration (automáticas con Ollama en misma EC2)
+# AI/ML Configuration (Ollama en la misma EC2 vía Docker network)
+# phi3:3.8b ~ 2.3 GB, ~2x más rápido que mistral:7b en CPU. Cambia a
+# mistral:7b-instruct si necesitas mejor calidad y aceptas el tradeoff.
 OLLAMA_URL=http://ollama:11434
-LOCAL_MODEL_NAME=mistral:7b-instruct
+LOCAL_MODEL_NAME=phi3:3.8b
 OLLAMA_HTTP_TIMEOUT_SECONDS=300
 OLLAMA_PULL_ON_START=1
 LOCAL_EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
