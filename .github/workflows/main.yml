@@ -187,9 +187,13 @@ jobs:
           DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           DB_SSLMODE=${{ secrets.DB_SSLMODE }}
           
-          # AI/ML Configuration (automáticas con Ollama en misma EC2)
+          # AI/ML Configuration (Ollama corre en la misma EC2 via Docker network)
+          # mistral:7b-instruct requiere ~7 GB RAM (t3.large+). Para t3.medium usa llama3.2:1b.
+          # Override vía secret LOCAL_MODEL_NAME si quieres mejor calidad y tienes RAM.
           OLLAMA_URL=http://ollama:11434
-          LOCAL_MODEL_NAME=mistral:7b-instruct
+          LOCAL_MODEL_NAME=${{ secrets.LOCAL_MODEL_NAME || 'qwen2.5:0.5b' }}
+          LLM_MAX_TOKENS=${{ secrets.LLM_MAX_TOKENS || '150' }}
+          CHAT_MAX_HISTORY=${{ secrets.CHAT_MAX_HISTORY || '6' }}
           OLLAMA_HTTP_TIMEOUT_SECONDS=300
           OLLAMA_PULL_ON_START=1
           
