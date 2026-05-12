@@ -1,0 +1,362 @@
+"""HTTP router for traveler matching and weight learning.
+
+Responsibilities:
+    Partner search, compatibility, connections, feedback, and outcomes
+    to adjust the matching model.
+
+Dependencies:
+    `MatchingServiceDep`, schemas in `app.modules.matching.schemas`.
+"""
+
+import logging
+import inspect
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query
+
+from app.api.deps import MatchingServiceDep
+from app.modules.matching.schemas import (
+    ConnectionOutcomeRequest,
+    ConnectionOutcomeResponse,
+    MatchingProfilesIngestRequest,
+    MatchingResponse,
+    TravelerMatchRequest,
+)
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+
+@router.post(
+    "/profiles/ingest",
+    responses={500: {"description": "Failed to ingest matching profiles"}},
+)
+async def ingest_matching_profiles(body: MatchingProfilesIngestRequest, service: MatchingServiceDep):
+    try:
+        count = await _resolve(service.ingest_profiles([p.model_dump() for p in body.profiles]))
+        return {"message": "Matching profiles ingested", "profiles": count}
+    except Exception as e:
+        logger.error("Error ingesting matching profiles: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to ingest matching profiles")
+
+
+async def _resolve(value):
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+@router.post(
+    "/find",
+    response_model=MatchingResponse,
+    responses={500: {"description": "Failed to find travel partners"}},
+)
+async def find_travel_partners(
+    request_data: TravelerMatchRequest,
+    service: MatchingServiceDep,
+):
+    """Finds compatible candidates from request criteria.
+
+    Args:
+        request_data: Source user and matching filters.
+        service: `MatchingService`.
+
+    Returns:
+        Ranked match list.
+
+    Raises:
+        HTTPException: 500 on matching engine error.
+    """
+    try:
+        logger.info("Finding travel partners for user %s", request_data.user_id)
+        matches = await _resolve(service.find_travel_partners(request_data))
+        logger.info("Found %s matches for user %s", len(matches.matches), request_data.user_id)
+        return matches
+    except Exception as e:
+        logger.error("Error finding travel partners: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to find travel partners")
+
+
+@router.get(
+    "/compatibility/{user_id}/{target_user_id}",
+    responses={
+        404: {"description": "One or both users not found"},
+        500: {"description": "Failed to calculate compatibility"},
+    },
+)
+async def get_compatibility_score(
+    user_id: str,
+    target_user_id: str,
+    service: MatchingServiceDep,
+):
+    """Computes compatibility score or breakdown between two users.
+
+    Args:
+        user_id: First user.
+        target_user_id: Second user.
+        service: `MatchingService`.
+
+    Returns:
+        Compatibility object from the service.
+
+    Raises:
+        HTTPException: 404 if a profile is missing; 500 on internal error.
+    """
+    try:
+        logger.info("Calculating compatibility between users")
+        compatibility = await _resolve(service.calculate_compatibility(user_id, target_user_id))
+        if not compatibility:
+            raise HTTPException(status_code=404, detail="One or both users not found")
+        return compatibility
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error calculating compatibility: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to calculate compatibility")
+
+
+@router.post(
+    "/connect/{user_id}/{target_user_id}",
+    responses={500: {"description": "Failed to initiate connection"}},
+)
+async def initiate_connection(
+    service: MatchingServiceDep,
+    user_id: str,
+    target_user_id: str,
+    message: Optional[str] = None,
+):
+    """Starts a connection request between two travelers.
+
+    Args:
+        service: `MatchingService`.
+        user_id: Initiating user.
+        target_user_id: Target user.
+        message: Optional request text.
+
+    Returns:
+        Confirmation with `connection_id` when the service provides it.
+
+    Raises:
+        HTTPException: 500 on internal error.
+    """
+    try:
+        logger.info("Initiating user connection")
+        connection = await _resolve(service.initiate_connection(user_id, target_user_id, message))
+        return {
+            "message": "Connection request sent successfully",
+            "connection_id": connection.get("connection_id"),
+            "user_id": user_id,
+            "target_user_id": target_user_id,
+        }
+    except Exception as e:
+        logger.error("Error initiating connection: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to initiate connection")
+
+
+@router.get(
+    "/connections/{user_id}",
+    responses={500: {"description": "Failed to fetch connections"}},
+)
+async def get_user_connections(
+    user_id: str,
+    service: MatchingServiceDep,
+    status: Optional[str] = None,
+):
+    """Lists the user's connections, optionally filtered by status.
+
+    Args:
+        user_id: Queried user.
+        service: `MatchingService`.
+        status: Optional textual status filter.
+
+    Returns:
+        Dict with `connections` and `total_count`.
+
+    Raises:
+        HTTPException: 500 on internal error.
+    """
+    try:
+        logger.info("Fetching user connections")
+        connections = await _resolve(service.get_user_connections(user_id, status))
+        return {"user_id": user_id, "connections": connections, "total_count": len(connections)}
+    except Exception as e:
+        logger.error("Error fetching connections: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch connections")
+
+
+@router.put(
+    "/connections/{connection_id}/respond",
+    responses={
+        400: {"description": "Response must be 'accept' or 'decline'"},
+        404: {"description": "Connection request not found"},
+        500: {"description": "Failed to respond to connection"},
+    },
+)
+async def respond_to_connection(
+    connection_id: str,
+    response: str,
+    service: MatchingServiceDep,
+    message: Optional[str] = None,
+):
+    """Accepts or declines an existing connection request.
+
+    Args:
+        connection_id: Request identifier.
+        response: Literal `accept` or `decline`.
+        service: `MatchingService`.
+        message: Optional reply to the other user.
+
+    Returns:
+        Confirmation with updated status.
+
+    Raises:
+        HTTPException: 400 if `response` is invalid; 404 if not found; 500 on failure.
+    """
+    try:
+        if response not in ["accept", "decline"]:
+            raise HTTPException(status_code=400, detail="Response must be 'accept' or 'decline'")
+        logger.info("Responding to user connection")
+        updated_connection = await _resolve(
+            service.respond_to_connection(connection_id, response, message)
+        )
+        if not updated_connection:
+            raise HTTPException(status_code=404, detail="Connection request not found")
+        return {
+            "message": f"Connection {response}ed successfully",
+            "connection_id": connection_id,
+            "status": response,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error responding to connection: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to respond to connection")
+
+
+@router.get(
+    "/recommendations/{user_id}",
+    responses={500: {"description": "Failed to get travel buddy recommendations"}},
+)
+async def get_travel_buddy_recommendations(
+    user_id: str,
+    service: MatchingServiceDep,
+    location: Optional[str] = None,
+    seeker_footprint: Optional[str] = Query(
+        None,
+        description="Comma-separated destinations from seeker's trip history / plans for overlap scoring",
+    ),
+    limit: int = 10,
+):
+    """Suggests travel buddies using profile fit + shared destinations (footprint / plan focus).
+
+    Args:
+        user_id: User to recommend for.
+        service: `MatchingService`.
+        location: Optional **focus** destination (e.g. selected plan city); boosts overlap, does not hard-filter.
+        seeker_footprint: Comma-separated extra destinations (past/future plans).
+        limit: Max suggestions.
+
+    Returns:
+        Dict with recommendation list and count.
+
+    Raises:
+        HTTPException: 500 on internal error.
+    """
+    try:
+        logger.info("Getting travel buddy recommendations")
+        fp_list = [p.strip() for p in (seeker_footprint or "").split(",") if p.strip()]
+        recommendations = await _resolve(
+            service.get_travel_buddy_recommendations(user_id, location, limit, fp_list)
+        )
+        return {
+            "user_id": user_id,
+            "recommendations": recommendations,
+            "total_count": len(recommendations),
+        }
+    except Exception as e:
+        logger.error("Error getting travel buddy recommendations: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to get travel buddy recommendations")
+
+
+@router.post(
+    "/learning/connection-outcome",
+    response_model=ConnectionOutcomeResponse,
+    responses={500: {"description": "Failed to record connection outcome"}},
+)
+async def submit_connection_outcome(
+    body: ConnectionOutcomeRequest,
+    service: MatchingServiceDep,
+):
+    """Records a connection outcome to update learning weights.
+
+    Args:
+        body: Users, outcome, and optional dimensional snapshot.
+        service: `MatchingService`.
+
+    Returns:
+        Status and updated weights when applicable.
+
+    Raises:
+        HTTPException: 500 on persist or compute error.
+    """
+    try:
+        weights = await _resolve(
+            service.process_connection_outcome(
+            body.user_id,
+            body.target_user_id,
+            body.outcome,
+            body.dimension_snapshot,
+            body.notes,
+            )
+        )
+        return ConnectionOutcomeResponse(status="ok", updated_weights=weights)
+    except Exception as e:
+        logger.error("Error recording connection outcome: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to record connection outcome")
+
+
+@router.post(
+    "/feedback/{user_id}/{target_user_id}",
+    responses={
+        400: {"description": "Rating must be between 1 and 5"},
+        500: {"description": "Failed to record match feedback"},
+    },
+)
+async def submit_match_feedback(
+    user_id: str,
+    target_user_id: str,
+    service: MatchingServiceDep,
+    rating: int,
+    feedback_text: Optional[str] = None,
+):
+    """Records explicit rating for the match or interaction.
+
+    Args:
+        user_id: Rater.
+        target_user_id: Counterparty.
+        service: `MatchingService`.
+        rating: Integer 1–5.
+        feedback_text: Optional free-text comment.
+
+    Returns:
+        Confirmation with ids and rating.
+
+    Raises:
+        HTTPException: 400 if rating is out of range; 500 on internal error.
+    """
+    try:
+        if rating < 1 or rating > 5:
+            raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
+        logger.info("Recording match feedback")
+        await _resolve(service.record_match_feedback(user_id, target_user_id, rating, feedback_text))
+        return {
+            "message": "Match feedback recorded successfully",
+            "user_id": user_id,
+            "target_user_id": target_user_id,
+            "rating": rating,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error recording match feedback: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to record match feedback")

@@ -1,0 +1,217 @@
+# ===========================================
+# CI / CD — AI Service (producción)
+# - Trivy (igual que backend-core: APT + skip-setup-trivy)
+# - SonarCloud: secrets ORGANIZATION_KEY, PROJECT_KEY, SONAR_TOKEN
+# - Artefactos: API tar (opcional), ml-models.tar.gz, voyager-ai-service-image.tar (Docker)
+# - Learner Lab: paquete manual + scripts/deploy-ai-service-manual.sh y ec2-deploy-ai-service.sh
+# ===========================================
+
+name: CI Build & Deploy (AI Service - Production)
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  trivy_scan:
+    name: Run Trivy Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y wget apt-transport-https gnupg
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update -qq
+          sudo apt-get install -y trivy
+
+      - name: Run Trivy FS Scan
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+          skip-setup-trivy: 'true'
+
+  sonar_scan:
+    name: SonarCloud Analysis (Python)
+    needs: trivy_scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest coverage
+
+      - name: Run tests with coverage for Sonar
+        run: |
+          if [ -d "tests" ]; then
+            coverage run -m pytest
+            coverage xml -o coverage.xml
+          else
+            echo "No tests directory found; creating empty coverage.xml for Sonar."
+            printf '%s\n' '<?xml version="1.0" ?><coverage version="7.0.0" timestamp="0" lines-valid="0" lines-covered="0" line-rate="0" branches-valid="0" branches-covered="0" branch-rate="0" complexity="0"><sources><source>.</source></sources><packages></packages></coverage>' > coverage.xml
+          fi
+
+      - name: Validate coverage report exists
+        run: |
+          test -f coverage.xml
+          ls -lah coverage.xml
+
+      - name: SonarCloud Scan (PR)
+        if: github.event_name == 'pull_request'
+        uses: SonarSource/sonarcloud-github-action@v2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: >
+            -Dsonar.organization=${{ secrets.ORGANIZATION_KEY }}
+            -Dsonar.projectKey=${{ secrets.PROJECT_KEY }}
+            -Dsonar.python.coverage.reportPaths=coverage.xml
+            -Dsonar.scm.disabled=true
+            -Dsonar.pullrequest.key=${{ github.event.number }}
+            -Dsonar.pullrequest.branch=${{ github.head_ref }}
+            -Dsonar.pullrequest.base=${{ github.base_ref }}
+            -Dsonar.scm.revision=${{ github.event.pull_request.head.sha }}
+
+      - name: SonarCloud Scan (branch)
+        if: github.event_name != 'pull_request'
+        uses: SonarSource/sonarcloud-github-action@v2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: >
+            -Dsonar.organization=${{ secrets.ORGANIZATION_KEY }}
+            -Dsonar.projectKey=${{ secrets.PROJECT_KEY }}
+            -Dsonar.python.coverage.reportPaths=coverage.xml
+            -Dsonar.scm.disabled=true
+            -Dsonar.branch.name=main
+            -Dsonar.branch.target=development
+
+  build:
+    name: Build & Test (Python)
+    needs: sonar_scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run unit tests
+        run: |
+          if [ -d "tests" ]; then
+            pytest
+          else
+            echo "No tests directory found, skipping tests."
+          fi
+
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (FastAPI)
+        run: |
+          mkdir -p release
+          docker build -t voyager-ai-service:latest .
+
+      - name: Save image for Learner Lab (docker load en EC2)
+        run: docker save voyager-ai-service:latest -o release/voyager-ai-service-image.tar
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-service-docker-image
+          path: release/voyager-ai-service-image.tar
+
+  deploy_ec2:
+    if: github.event_name == 'push'
+    name: Deploy to EC2 (Learner Lab)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Make deploy script executable
+        run: chmod +x scripts/ec2-deploy-ai-service.sh
+
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-service-docker-image
+          path: release
+
+      - name: Create environment file from GitHub Secrets
+        run: |
+          cat > release/environment << EOF
+          # Database configuration
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_PORT=${{ secrets.DB_PORT }}
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_USERNAME=${{ secrets.DB_USERNAME }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_SSLMODE=${{ secrets.DB_SSLMODE }}
+          
+          # AI/ML Configuration (Ollama corre en la misma EC2 via Docker network)
+          # mistral:7b-instruct requiere ~7 GB RAM (t3.large+). Para t3.medium usa llama3.2:1b.
+          # Override vía secret LOCAL_MODEL_NAME si quieres mejor calidad y tienes RAM.
+          OLLAMA_URL=http://ollama:11434
+          LOCAL_MODEL_NAME=${{ secrets.LOCAL_MODEL_NAME || 'qwen2.5:0.5b' }}
+          LLM_MAX_TOKENS=${{ secrets.LLM_MAX_TOKENS || '150' }}
+          CHAT_MAX_HISTORY=${{ secrets.CHAT_MAX_HISTORY || '6' }}
+          OLLAMA_HTTP_TIMEOUT_SECONDS=300
+          OLLAMA_PULL_ON_START=1
+          
+          # Service Configuration
+          ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}
+          
+          # Fixed values (no secrets)
+          AI_HOST_PORT=8000
+          CORS_ALLOW_EC2_COMPUTE_DNS=false
+          LOG_LEVEL=INFO
+          VOYAGER_AI_IMAGE=voyager-ai-service:latest
+          EOF
+
+      - name: Publish deployment package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-service-ec2-deploy
+          path: |
+            release/voyager-ai-service-image.tar
+            release/environment
+            scripts/ec2-deploy-ai-service.sh

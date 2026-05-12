@@ -1,0 +1,72 @@
+# Stack listo para EC2: Ollama en un contenedor y el microservicio FastAPI en otro.
+# Uso: cd voyager-ai-service && docker compose up -d --build
+#
+# Primera vez: por defecto el entrypoint hace pull del modelo (OLLAMA_PULL_ON_START=1 en compose).
+# Para desactivar: OLLAMA_PULL_ON_START=0 y ejecuta manualmente:
+#   docker compose exec ollama ollama pull mistral:7b-instruct
+#
+# La app usa OLLAMA_URL=http://ollama:11434 (red interna de Compose).
+# GPU en EC2: descomenta el bloque deploy en el servicio ollama y usa NVIDIA Container Toolkit.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - ai_net
+    # Descomenta para depurar desde fuera de la red Docker (no obligatorio si solo habla `ai`):
+    # ports:
+    #   - "11434:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    # GPU (instancias g* con drivers + nvidia-container-toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    ports:
+      - "${AI_HOST_PORT:-8000}:8000"
+    environment:
+      PYTHONPATH: /app
+      OLLAMA_URL: http://ollama:11434
+      DATABASE_URL: sqlite:////app/data/tourism_assistant.db
+      AI_SQLITE_PATH: /app/data/ai_memory.db
+      # CORS: ajusta en .env (CSV) o activa EC2 DNS público
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:5174,http://localhost:3000}
+      CORS_ALLOW_EC2_COMPUTE_DNS: ${CORS_ALLOW_EC2_COMPUTE_DNS:-false}
+      LOCAL_MODEL_NAME: ${LOCAL_MODEL_NAME:-phi3:3.8b}
+      OLLAMA_PULL_ON_START: ${OLLAMA_PULL_ON_START:-1}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    # Compose interpola ${VAR} desde el `.env` del directorio del proyecto (mismo nivel que este YAML).
+    volumes:
+      - ai_service_data:/app/data
+      - ai_ml_models:/app/app/ml/models
+    networks:
+      - ai_net
+
+volumes:
+  ollama_data:
+  ai_service_data:
+  ai_ml_models:
+
+networks:
+  ai_net:
+    driver: bridge

@@ -1,0 +1,168 @@
+{
+  "info": {
+    "_postman_id": "aa2ecae5-2456-4e72-a55c-0aa374a6071d",
+    "name": "Voyager AI Service — Data-Driven Local",
+    "description": "Coleccion alineada al flujo actual data-driven. No incluye endpoints legacy `/api/v1/recommendations/*`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "rootUrl", "value": "http://localhost:8000" },
+    { "key": "baseUrl", "value": "http://localhost:8000/api/v1" },
+    { "key": "localUserId", "value": "user1" },
+    { "key": "localSessionId", "value": "postman-local-session-1" },
+    { "key": "localActivityId", "value": "ai-item-002" },
+    { "key": "questionnaireSessionId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "00 — Salud",
+      "item": [
+        { "name": "Root", "request": { "method": "GET", "url": "{{rootUrl}}/" } },
+        { "name": "Health", "request": { "method": "GET", "url": "{{rootUrl}}/health" } },
+        { "name": "OpenAPI", "request": { "method": "GET", "url": "{{rootUrl}}/openapi.json" } }
+      ]
+    },
+    {
+      "name": "01 — Ingesta Base (obligatorio)",
+      "item": [
+        {
+          "name": "Trends ingest signals",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/trends/ingest/signals",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rows\": [\n    {\n      \"destination_id\": \"dst_barcelona\",\n      \"name\": \"Barcelona\",\n      \"country\": \"Spain\",\n      \"tags\": [\"cultural\", \"foodie\"],\n      \"previous\": 90,\n      \"current\": 120\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Trends ingest segments",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/trends/ingest/segments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"segments\": {\n    \"family_budget\": {\n      \"label\": \"Family Budget\",\n      \"seasonal\": [{\"label\": \"verano\", \"intensity\": 0.8, \"months_peak\": [7, 8]}],\n      \"budget\": {\"avg_daily_budget\": 90, \"currency\": \"EUR\"},\n      \"preferences\": [\"family\", \"budget\"]\n    }\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "Seasonality ingest profiles",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/seasonality/ingest/profiles",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rows\": [\n    {\n      \"destination_id\": \"dst_barcelona\",\n      \"name\": \"Barcelona\",\n      \"country\": \"Spain\",\n      \"monthly_indices\": [0.8,0.8,0.9,1.0,1.1,1.2,1.3,1.3,1.2,1.0,0.9,0.8]\n    },\n    {\n      \"destination_id\": \"dst_lisbon\",\n      \"name\": \"Lisbon\",\n      \"country\": \"Portugal\",\n      \"monthly_indices\": [0.7,0.8,0.9,1.0,1.0,1.1,1.2,1.2,1.1,1.0,0.9,0.8]\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Matching ingest profiles",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/matching/profiles/ingest",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"profiles\": [\n    {\"user_id\": \"user1\", \"name\": \"Ana\", \"location\": \"Barcelona\", \"preferences\": [\"cultural\"]},\n    {\"user_id\": \"user2\", \"name\": \"Luis\", \"location\": \"Barcelona\", \"preferences\": [\"cultural\", \"foodie\"]}\n  ]\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 — Trends",
+      "item": [
+        { "name": "Dashboard", "request": { "method": "GET", "url": "{{baseUrl}}/trends/dashboard" } },
+        { "name": "Segment insights", "request": { "method": "GET", "url": "{{baseUrl}}/trends/segments/family_budget/insights" } },
+        { "name": "Weekly digest", "request": { "method": "GET", "url": "{{baseUrl}}/trends/weekly-digest" } }
+      ]
+    },
+    {
+      "name": "03 — Seasonality",
+      "item": [
+        { "name": "Overview", "request": { "method": "GET", "url": "{{baseUrl}}/seasonality/overview?reference_month=7" } },
+        { "name": "Destination profile", "request": { "method": "GET", "url": "{{baseUrl}}/seasonality/destinations/dst_lisbon" } },
+        {
+          "name": "Visibility adjustments",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/seasonality/visibility-adjustments",
+            "body": { "mode": "raw", "raw": "{\n  \"destination_ids\": [\"dst_barcelona\", \"dst_lisbon\"],\n  \"travel_month\": 7,\n  \"apply_mitigation\": true\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 — Users y Matching",
+      "item": [
+        {
+          "name": "Create profile",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/users/profile",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"user1\",\n  \"name\": \"Ana\",\n  \"email\": \"ana@example.com\",\n  \"preferences\": {\n    \"preferences\": [\"cultural\"],\n    \"budget_range\": {\"min\": 50, \"max\": 250},\n    \"travel_style\": \"mid-range\",\n    \"group_size\": 2,\n    \"accessibility_needs\": [],\n    \"dietary_restrictions\": [],\n    \"language_preferences\": [\"Spanish\"]\n  },\n  \"travel_history\": []\n}"
+            }
+          }
+        },
+        {
+          "name": "Find matching",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/matching/find",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"user1\",\n  \"location\": {\"latitude\": 41.39, \"longitude\": 2.15, \"city\": \"Barcelona\", \"country\": \"Spain\", \"radius_km\": 25},\n  \"preferences\": [\"cultural\"],\n  \"max_matches\": 5\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 — Local AI + Recomendaciones",
+      "item": [
+        {
+          "name": "Chat local",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/local/chat/message",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{localUserId}}\",\n  \"session_id\": \"{{localSessionId}}\",\n  \"message\": \"Hola, recomiendame algo cultural\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Local recommendations",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/local/recommendations",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{localUserId}}\",\n  \"query\": \"actividades culturales en madrid\",\n  \"limit\": 5,\n  \"candidates\": [\n    {\"id\": \"ai-item-001\", \"name\": \"Museo del Prado\", \"category\": \"cultural\", \"price\": 18, \"content_text\": \"arte clasico\"},\n    {\"id\": \"ai-item-002\", \"name\": \"Parque del Retiro\", \"category\": \"nature\", \"price\": 0, \"content_text\": \"outdoor\"}\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Recommendation feedback",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/local/recommendations/feedback?user_id={{localUserId}}&item_id={{localActivityId}}&rating=5"
+          }
+        }
+      ]
+    }
+  ]
+}

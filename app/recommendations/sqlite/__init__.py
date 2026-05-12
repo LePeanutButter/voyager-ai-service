@@ -1,0 +1,2 @@
+"""SQLite queries for recommendations."""
+

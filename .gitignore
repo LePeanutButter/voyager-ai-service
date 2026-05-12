@@ -125,6 +125,7 @@ dmypy.json
 # IDE
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
 *~
@@ -156,6 +157,8 @@ data/
 datasets/
 *.csv
 *.json
+!Voyager-AI-Service.postman_collection.json
+!Voyager-AI-Service.local.postman_environment.json
 *.jsonl
 *.parquet
 *.feather
@@ -170,7 +173,6 @@ tensorboard_logs/
 *.log
 
 # Model artifacts
-models/
 checkpoints/
 artifacts/
 outputs/
@@ -186,7 +188,6 @@ temp/
 cache/
 
 # Docker
-.dockerignore
 docker-compose.override.yml
 
 # Kubernetes
@@ -249,7 +250,6 @@ pyvenv.cfg
 poetry.lock
 
 # pip-tools
-requirements-dev.txt
 requirements-test.txt
 
 # Jupyter
